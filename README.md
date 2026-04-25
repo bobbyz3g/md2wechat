@@ -1,12 +1,14 @@
 # md2wechat
 
-一个面向微信公众号排版的 Markdown 预览与复制工具。
+md2wechat 是一个面向微信公众号写作的 Markdown 排版工具。
 
-第一版目标很小：输入 Markdown，实时生成带内联样式的公众号可粘贴 HTML，并通过浏览器 Clipboard API 复制富文本。
+它适合习惯用 Markdown 写文章，但最终需要发布到微信公众号的人。你可以在页面里输入 Markdown，查看接近公众号编辑器的排版效果，再把内容复制到公众号后台。
 
-## 开发
+这个项目关注的是稳定的粘贴结果，而不只是把 Markdown 转成网页。标题、段落、引用、列表和代码块都会按公众号可接受的方式排版，尽量减少粘贴后样式丢失、结构变形、代码块显示不一致这类问题。
 
-当前仓库使用 WSL nvm 管理的 Node.js。
+当前版本先服务本地写作和手动发布流程，目标是让内容作者更快得到一份能直接贴进微信公众号的文章。
+
+## 运行
 
 ```sh
 source ~/.nvm/nvm.sh
@@ -14,25 +16,4 @@ npm install
 npm run dev
 ```
 
-## 脚本
-
-```sh
-npm run lint
-npm test
-npm run build
-```
-
-## 结构
-
-```text
-src/core/
-  renderMarkdown.ts
-  themes.ts
-src/clipboard/
-  copyWechatHtml.ts
-src/app/
-  App.tsx
-  styles.css
-```
-
-`src/core` 是后续 CLI 和 Web UI 可以共同复用的渲染核心。
+启动后在浏览器打开终端里显示的本地地址。
