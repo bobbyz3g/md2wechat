@@ -20,12 +20,36 @@ const value = 1
 \`\`\`
 `)
 
-    expect(result.html).toContain('<section style=')
-    expect(result.html).toContain('<h1 style=')
-    expect(result.html).toContain('<blockquote style=')
-    expect(result.html).toContain('<ul style=')
-    expect(result.html).toContain('<pre style=')
+    expect(result.html).toContain('<section id="nice"')
+    expect(result.html).toContain('data-tool="mdnice编辑器"')
+    expect(result.html).toContain('<h1 data-tool="mdnice编辑器"')
+    expect(result.html).toContain('<span class="content"')
+    expect(result.html).toContain('<blockquote data-tool="mdnice编辑器"')
+    expect(result.html).toContain('class="custom-blockquote multiquote-1"')
+    expect(result.html).toContain('<ul data-tool="mdnice编辑器"')
+    expect(result.html).toContain('<li><section style=')
+    expect(result.html).toContain('<pre data-tool="mdnice编辑器"')
+    expect(result.html).toContain('class="hljs"')
     expect(result.text).toContain('# 标题')
+  })
+
+  it('renders the mdnice heading and code-block structure', () => {
+    const result = renderMarkdown(`## 二级标题
+
+\`\`\`
+这里是代码块
+\`\`\`
+`)
+
+    expect(result.html).toContain('background-color:rgb(239, 112, 96)')
+    expect(result.html).toContain('border-bottom-width:36px')
+    expect(result.html).toContain('background-color:#282c34')
+    expect(result.html).toContain('background-color:#ff5f56')
+    expect(result.html).toContain('background-color:#ffbd2e')
+    expect(result.html).toContain('background-color:#27c93f')
+    expect(result.html).toContain('color:#ff5f56')
+    expect(result.html).toContain('>\u25cf</span>')
+    expect(result.html).not.toContain('files.mdnice.com')
   })
 
   it('supports gfm tables and strikethrough', () => {
