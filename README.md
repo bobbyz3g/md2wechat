@@ -10,8 +10,9 @@ md2wechat 是一个面向微信公众号写作的 Markdown 排版工具。
 
 ## 运行
 
+在已有 npm 环境下安装依赖并启动开发服务：
+
 ```sh
-source ~/.nvm/nvm.sh
 npm install
 npm run dev
 ```
