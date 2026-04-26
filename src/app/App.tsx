@@ -66,6 +66,8 @@ type RenameTarget = {
   name: string
 }
 
+type DeleteTarget = RenameTarget
+
 type DirectoryRenameResponse = {
   oldPath: string
   path: string
@@ -74,6 +76,10 @@ type DirectoryRenameResponse = {
 
 type ArticleRenameResponse = DirectoryRenameResponse & {
   updatedAt: string
+}
+
+type DeleteResponse = {
+  path: string
 }
 
 const maxDirectoryDepth = 2
@@ -95,6 +101,11 @@ export function App() {
   const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null)
   const [renameName, setRenameName] = useState('')
   const [isRenaming, setIsRenaming] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
+  const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(
+    null,
+  )
+  const [isDeleting, setIsDeleting] = useState(false)
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(
     () => new Set(),
   )
@@ -274,6 +285,25 @@ export function App() {
     }
   }, [isRenaming, renameTarget])
 
+  useEffect(() => {
+    if (!deleteTarget) {
+      return
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !isDeleting) {
+        setDeleteTarget(null)
+        setDeleteErrorMessage(null)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [deleteTarget, isDeleting])
+
   async function handleCopy() {
     const saved = await saveCurrentArticle()
 
@@ -389,8 +419,19 @@ export function App() {
   function startRename(target: RenameTarget) {
     setOpenMenu(null)
     setCreating(null)
+    setDeleteTarget(null)
     setRenameTarget(target)
     setRenameName(target.name)
+    setErrorMessage(null)
+  }
+
+  function startDelete(target: DeleteTarget) {
+    setOpenMenu(null)
+    setCreating(null)
+    setRenameTarget(null)
+    setRenameName('')
+    setDeleteTarget(target)
+    setDeleteErrorMessage(null)
     setErrorMessage(null)
   }
 
@@ -503,6 +544,91 @@ export function App() {
 
       return nextDirectories
     })
+  }
+
+  function syncExpandedDirectoriesAfterDelete(directoryPath: string) {
+    setExpandedDirectories((currentDirectories) => {
+      const nextDirectories = new Set<string>()
+
+      for (const expandedPath of currentDirectories) {
+        if (
+          expandedPath !== directoryPath &&
+          !expandedPath.startsWith(`${directoryPath}/`)
+        ) {
+          nextDirectories.add(expandedPath)
+        }
+      }
+
+      return nextDirectories
+    })
+  }
+
+  function clearCurrentArticle() {
+    selectedPathRef.current = null
+    markdownRef.current = ''
+    lastSavedMarkdownRef.current = ''
+
+    clearLastArticlePath()
+    setSelectedPath(null)
+    setMarkdown('')
+    setLastSavedMarkdown('')
+    setCopyState('idle')
+    setSaveState('saved')
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget || isDeleting) {
+      return
+    }
+
+    setIsDeleting(true)
+    setDeleteErrorMessage(null)
+
+    try {
+      const saved = await saveCurrentArticle()
+
+      if (!saved) {
+        return
+      }
+
+      const pathParameter = encodeURIComponent(deleteTarget.path)
+      const result =
+        deleteTarget.type === 'directory'
+          ? await requestJson<DeleteResponse>(
+              `/api/articles/directories?path=${pathParameter}`,
+              {
+                method: 'DELETE',
+              },
+            )
+          : await requestJson<DeleteResponse>(
+              `/api/articles?path=${pathParameter}`,
+              {
+                method: 'DELETE',
+              },
+            )
+
+      const currentPath = selectedPathRef.current
+
+      if (
+        currentPath &&
+        (currentPath === result.path || currentPath.startsWith(`${result.path}/`))
+      ) {
+        clearCurrentArticle()
+      }
+
+      if (deleteTarget.type === 'directory') {
+        syncExpandedDirectoriesAfterDelete(result.path)
+      }
+
+      await refreshTree()
+      setDeleteTarget(null)
+      setDeleteErrorMessage(null)
+      setErrorMessage(null)
+    } catch (error) {
+      setDeleteErrorMessage(getErrorMessage(error))
+    } finally {
+      setIsDeleting(false)
+    }
   }
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
@@ -629,6 +755,14 @@ export function App() {
           onClick={() => startRename(target)}
         >
           重命名
+        </button>
+        <button
+          className="menu-item danger"
+          role="menuitem"
+          type="button"
+          onClick={() => startDelete(target)}
+        >
+          删除
         </button>
       </div>
     )
@@ -893,6 +1027,59 @@ export function App() {
                 </button>
               </div>
             </form>
+          </section>
+        </div>
+      ) : null}
+
+      {deleteTarget ? (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !isDeleting) {
+              setDeleteTarget(null)
+              setDeleteErrorMessage(null)
+            }
+          }}
+        >
+          <section
+            aria-labelledby="delete-title"
+            aria-modal="true"
+            className="confirm-dialog"
+            role="dialog"
+          >
+            <div className="dialog-title" id="delete-title">
+              {deleteTarget.type === 'directory' ? '删除目录' : '删除文章'}
+            </div>
+            <p className="dialog-copy">
+              确定删除「{deleteTarget.name}」吗？该操作无法撤销。
+            </p>
+            {deleteErrorMessage ? (
+              <div className="dialog-alert" role="alert">
+                {deleteErrorMessage}
+              </div>
+            ) : null}
+            <div className="dialog-actions">
+              <button
+                className="small-button"
+                type="button"
+                autoFocus
+                disabled={isDeleting}
+                onClick={() => {
+                  setDeleteTarget(null)
+                  setDeleteErrorMessage(null)
+                }}
+              >
+                取消
+              </button>
+              <button
+                className="small-button danger"
+                type="button"
+                disabled={isDeleting}
+                onClick={() => void handleDelete()}
+              >
+                {isDeleting ? '删除中' : '删除'}
+              </button>
+            </div>
           </section>
         </div>
       ) : null}

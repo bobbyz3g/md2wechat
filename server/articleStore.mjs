@@ -5,7 +5,9 @@ import {
   readdir,
   readFile,
   rename,
+  rmdir,
   stat,
+  unlink,
   writeFile,
 } from 'node:fs/promises'
 import path from 'node:path'
@@ -210,6 +212,45 @@ export async function renameArticle(articlePath, rawName) {
     path: joinPath(parentRelativePath, fileName),
     name: getArticleName(fileName),
     updatedAt: fileStat.mtime.toISOString(),
+  }
+}
+
+export async function deleteDirectory(directoryPath) {
+  const directory = resolveDirectoryPath(directoryPath ?? '')
+
+  if (directory.depth < 1) {
+    throw new ArticleStoreError(400, '不能删除文章库根目录')
+  }
+
+  if (directory.depth > maxDirectoryDepth) {
+    throw new ArticleStoreError(400, '目录层级超过限制')
+  }
+
+  await assertDirectoryExists(directory.fullPath)
+  await assertDirectoryCanBeDeleted(directory.fullPath)
+  await removeEmptyDirectoryTree(directory.fullPath)
+
+  return {
+    path: directory.relativePath,
+  }
+}
+
+export async function deleteArticle(articlePath) {
+  const article = resolveArticlePath(articlePath)
+  await assertFileExists(article.fullPath)
+
+  try {
+    await unlink(article.fullPath)
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw new ArticleStoreError(404, '文章不存在')
+    }
+
+    throw error
+  }
+
+  return {
+    path: article.relativePath,
   }
 }
 
@@ -440,6 +481,58 @@ async function assertPathAvailable(fullPath, message) {
   }
 
   throw new ArticleStoreError(409, message)
+}
+
+async function assertDirectoryCanBeDeleted(fullPath) {
+  const entries = await readdir(fullPath, { withFileTypes: true })
+
+  for (const entry of entries) {
+    const childPath = path.resolve(fullPath, entry.name)
+
+    if (entry.isDirectory()) {
+      await assertDirectoryCanBeDeleted(childPath)
+      continue
+    }
+
+    if (entry.isFile() && entry.name.endsWith(articleExtension)) {
+      throw new ArticleStoreError(409, '目录下还有文章')
+    }
+
+    throw new ArticleStoreError(409, '目录下还有非文章文件')
+  }
+}
+
+async function removeEmptyDirectoryTree(fullPath) {
+  const entries = await readdir(fullPath, { withFileTypes: true })
+
+  for (const entry of entries) {
+    const childPath = path.resolve(fullPath, entry.name)
+
+    if (entry.isDirectory()) {
+      await removeEmptyDirectoryTree(childPath)
+      continue
+    }
+
+    if (entry.isFile() && entry.name.endsWith(articleExtension)) {
+      throw new ArticleStoreError(409, '目录下还有文章')
+    }
+
+    throw new ArticleStoreError(409, '目录下还有非文章文件')
+  }
+
+  try {
+    await rmdir(fullPath)
+  } catch (error) {
+    if (error?.code === 'ENOTEMPTY' || error?.code === 'EEXIST') {
+      throw new ArticleStoreError(409, '目录下还有内容')
+    }
+
+    if (error?.code === 'ENOENT') {
+      throw new ArticleStoreError(404, '目录不存在')
+    }
+
+    throw error
+  }
 }
 
 function assertInsideArticleRoot(fullPath) {

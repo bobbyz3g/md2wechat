@@ -5,6 +5,8 @@ import {
   articleRoot,
   createArticle,
   createDirectory,
+  deleteArticle,
+  deleteDirectory,
   ensureDefaultLibrary,
   getArticleTree,
   readArticle,
@@ -78,6 +80,25 @@ const server = createServer(async (request, response) => {
     if (request.method === 'PATCH' && url.pathname === '/api/articles') {
       const body = await readJsonBody(request)
       const article = await renameArticle(body.path, body.name)
+
+      sendJson(response, 200, article)
+      return
+    }
+
+    if (
+      request.method === 'DELETE' &&
+      url.pathname === '/api/articles/directories'
+    ) {
+      const directoryPath = url.searchParams.get('path') ?? ''
+      const directory = await deleteDirectory(directoryPath)
+
+      sendJson(response, 200, directory)
+      return
+    }
+
+    if (request.method === 'DELETE' && url.pathname === '/api/articles') {
+      const articlePath = url.searchParams.get('path') ?? ''
+      const article = await deleteArticle(articlePath)
 
       sendJson(response, 200, article)
       return

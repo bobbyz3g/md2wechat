@@ -35,6 +35,8 @@ md2wechat
 - `POST /api/articles`：新增文章。
 - `PATCH /api/articles/directories`：重命名目录。
 - `PATCH /api/articles`：重命名文章。
+- `DELETE /api/articles/directories?path=...`：删除空目录树。
+- `DELETE /api/articles?path=...`：删除文章。
 - `GET /api/articles/content?path=...`：读取文章内容。
 - `PUT /api/articles/content`：保存文章内容。
 

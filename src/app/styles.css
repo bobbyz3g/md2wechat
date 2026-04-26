@@ -167,6 +167,12 @@ textarea:focus-visible {
   box-shadow: 0 7px 16px oklch(32% 0.07 150 / 16%);
 }
 
+.small-button.danger {
+  color: oklch(98% 0.01 74);
+  background: oklch(41% 0.15 31);
+  box-shadow: 0 7px 16px oklch(35% 0.12 31 / 18%);
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(0, 1fr);
@@ -402,6 +408,10 @@ textarea:focus-visible {
   opacity: 0.45;
 }
 
+.menu-item.danger {
+  color: oklch(41% 0.15 31);
+}
+
 .row-note {
   color: oklch(45% 0.03 62);
   font-size: 12px;
@@ -517,7 +527,8 @@ textarea:focus-visible {
   background: oklch(18% 0.02 62 / 38%);
 }
 
-.rename-dialog {
+.rename-dialog,
+.confirm-dialog {
   width: min(420px, 100%);
   border-radius: 8px;
   background: oklch(98% 0.009 73);
@@ -526,7 +537,8 @@ textarea:focus-visible {
     0 22px 60px oklch(20% 0.025 58 / 28%);
 }
 
-.rename-dialog form {
+.rename-dialog form,
+.confirm-dialog {
   display: grid;
   gap: 14px;
   padding: 18px;
@@ -552,6 +564,24 @@ textarea:focus-visible {
   outline: 0;
 }
 
+.dialog-copy {
+  margin: 0;
+  color: oklch(38% 0.025 60);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.dialog-alert {
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: oklch(34% 0.16 31);
+  background: oklch(93% 0.055 31);
+  box-shadow: inset 0 0 0 1px oklch(72% 0.12 31 / 28%);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
@@ -570,6 +600,10 @@ textarea:focus-visible {
 
   .small-button.primary:hover {
     background: oklch(36% 0.07 150);
+  }
+
+  .small-button.danger:hover {
+    background: oklch(36% 0.145 31);
   }
 
   .more-button:hover,
