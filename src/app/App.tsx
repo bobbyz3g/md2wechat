@@ -77,6 +77,7 @@ type ArticleRenameResponse = DirectoryRenameResponse & {
 }
 
 const maxDirectoryDepth = 2
+const lastArticlePathStorageKey = 'md2wechat:lastArticlePath'
 
 export function App() {
   const [tree, setTree] = useState<ArticleTree | null>(null)
@@ -94,6 +95,9 @@ export function App() {
   const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null)
   const [renameName, setRenameName] = useState('')
   const [isRenaming, setIsRenaming] = useState(false)
+  const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(
+    () => new Set(),
+  )
 
   const selectedPathRef = useRef<string | null>(null)
   const markdownRef = useRef('')
@@ -115,6 +119,7 @@ export function App() {
     markdownRef.current = article.content
     lastSavedMarkdownRef.current = article.content
 
+    writeLastArticlePath(articlePath)
     setSelectedPath(articlePath)
     setMarkdown(article.content)
     setLastSavedMarkdown(article.content)
@@ -181,11 +186,20 @@ export function App() {
 
         setTree(nextTree)
 
-        const firstArticle = findFirstArticle(nextTree)
+        const lastArticlePath = readLastArticlePath()
+        const lastArticle = lastArticlePath
+          ? findArticle(nextTree, lastArticlePath)
+          : null
+        const initialArticle = lastArticle ?? findFirstArticle(nextTree)
 
-        if (firstArticle) {
-          await loadArticle(firstArticle.path)
+        if (initialArticle) {
+          setExpandedDirectories(
+            new Set(getParentDirectoryPaths(initialArticle.path)),
+          )
+          await loadArticle(initialArticle.path)
         } else {
+          clearLastArticlePath()
+          setExpandedDirectories(new Set())
           setSaveState('saved')
         }
       } catch (error) {
@@ -309,8 +323,36 @@ export function App() {
     }
   }
 
+  function expandDirectory(directoryPath: string) {
+    if (!directoryPath) {
+      return
+    }
+
+    setExpandedDirectories((currentDirectories) => {
+      const nextDirectories = new Set(currentDirectories)
+
+      nextDirectories.add(directoryPath)
+      return nextDirectories
+    })
+  }
+
+  function toggleDirectory(directoryPath: string) {
+    setExpandedDirectories((currentDirectories) => {
+      const nextDirectories = new Set(currentDirectories)
+
+      if (nextDirectories.has(directoryPath)) {
+        nextDirectories.delete(directoryPath)
+      } else {
+        nextDirectories.add(directoryPath)
+      }
+
+      return nextDirectories
+    })
+  }
+
   function startCreateDirectory(parentPath: string) {
     setOpenMenu(null)
+    expandDirectory(parentPath)
     setCreating({
       type: 'directory',
       parentPath,
@@ -321,6 +363,7 @@ export function App() {
 
   function startCreateArticle(directoryPath: string) {
     setOpenMenu(null)
+    expandDirectory(directoryPath)
     setCreating({
       type: 'article',
       directoryPath,
@@ -395,6 +438,9 @@ export function App() {
             })
 
       syncSelectedPathAfterRename(renameTarget.type, result.oldPath, result.path)
+      if (renameTarget.type === 'directory') {
+        syncExpandedDirectoriesAfterDirectoryRename(result.oldPath, result.path)
+      }
       await refreshTree()
       setRenameTarget(null)
       setRenameName('')
@@ -419,6 +465,7 @@ export function App() {
 
     if (targetType === 'article' && currentPath === oldPath) {
       selectedPathRef.current = nextPath
+      writeLastArticlePath(nextPath)
       setSelectedPath(nextPath)
       return
     }
@@ -430,8 +477,32 @@ export function App() {
       const renamedPath = `${nextPath}${currentPath.slice(oldPath.length)}`
 
       selectedPathRef.current = renamedPath
+      writeLastArticlePath(renamedPath)
       setSelectedPath(renamedPath)
     }
+  }
+
+  function syncExpandedDirectoriesAfterDirectoryRename(
+    oldPath: string,
+    nextPath: string,
+  ) {
+    setExpandedDirectories((currentDirectories) => {
+      const nextDirectories = new Set<string>()
+
+      for (const directoryPath of currentDirectories) {
+        if (directoryPath === oldPath) {
+          nextDirectories.add(nextPath)
+        } else if (directoryPath.startsWith(`${oldPath}/`)) {
+          nextDirectories.add(
+            `${nextPath}${directoryPath.slice(oldPath.length)}`,
+          )
+        } else {
+          nextDirectories.add(directoryPath)
+        }
+      }
+
+      return nextDirectories
+    })
   }
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
@@ -452,6 +523,7 @@ export function App() {
 
     try {
       if (creating.type === 'directory') {
+        expandDirectory(creating.parentPath)
         await requestJson('/api/articles/directories', {
           method: 'POST',
           body: JSON.stringify({
@@ -467,6 +539,7 @@ export function App() {
           return
         }
 
+        expandDirectory(creating.directoryPath)
         const article = await requestJson<ArticleNode>('/api/articles', {
           method: 'POST',
           body: JSON.stringify({
@@ -611,16 +684,25 @@ export function App() {
     }
 
     const canCreateDirectory = node.depth < maxDirectoryDepth
+    const isExpanded = expandedDirectories.has(node.path)
     const isMenuOpen =
       openMenu?.type === 'directory' && openMenu.path === node.path
 
     return (
       <li className={`tree-item depth-${node.depth}`} key={node.path}>
         <div className="directory-row">
-          <div className="node-main directory-main">
+          <button
+            aria-expanded={isExpanded}
+            className="node-main directory-main"
+            type="button"
+            onClick={() => toggleDirectory(node.path)}
+          >
+            <span className="expand-indicator" aria-hidden="true">
+              {isExpanded ? '▾' : '▸'}
+            </span>
             <span className="directory-marker" aria-hidden="true" />
             <span className="tree-name">{node.name}</span>
-          </div>
+          </button>
           <div className="row-actions menu-shell">
             <button
               aria-expanded={isMenuOpen}
@@ -647,17 +729,23 @@ export function App() {
             )}
           </div>
         </div>
-        {renderCreateForm(
-          (creating?.type === 'directory' &&
-            creating.parentPath === node.path) ||
-            (creating?.type === 'article' &&
-              creating.directoryPath === node.path),
-        )}
-        {node.children.length > 0 ? (
-          <ul className="tree-list">{node.children.map(renderTreeNode)}</ul>
-        ) : (
-          <div className="empty-folder">还没有文章</div>
-        )}
+        {isExpanded ? (
+          <>
+            {renderCreateForm(
+              (creating?.type === 'directory' &&
+                creating.parentPath === node.path) ||
+                (creating?.type === 'article' &&
+                  creating.directoryPath === node.path),
+            )}
+            {node.children.length > 0 ? (
+              <ul className="tree-list child-list">
+                {node.children.map(renderTreeNode)}
+              </ul>
+            ) : (
+              <div className="empty-folder">还没有文章</div>
+            )}
+          </>
+        ) : null}
       </li>
     )
   }
@@ -898,4 +986,46 @@ function findArticle(
   }
 
   return null
+}
+
+function readLastArticlePath() {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  try {
+    return window.localStorage.getItem(lastArticlePathStorageKey)
+  } catch {
+    return null
+  }
+}
+
+function writeLastArticlePath(articlePath: string) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(lastArticlePathStorageKey, articlePath)
+  } catch {
+    return
+  }
+}
+
+function clearLastArticlePath() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.localStorage.removeItem(lastArticlePathStorageKey)
+  } catch {
+    return
+  }
+}
+
+function getParentDirectoryPaths(articlePath: string) {
+  const segments = articlePath.split('/').slice(0, -1)
+
+  return segments.map((_, index) => segments.slice(0, index + 1).join('/'))
 }
