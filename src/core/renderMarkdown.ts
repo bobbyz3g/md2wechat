@@ -1,3 +1,4 @@
+import rehypeHighlight from 'rehype-highlight'
 import rehypeStringify from 'rehype-stringify'
 import remarkGfm from 'remark-gfm'
 import remarkParse from 'remark-parse'
@@ -23,6 +24,52 @@ type HastNode = {
   children?: HastNode[]
 }
 
+const highlightTokenStyles: Record<string, string> = {
+  'hljs-addition': 'color:#98c379;',
+  'hljs-attr': 'color:#d19a66;',
+  'hljs-attribute': 'color:#d19a66;',
+  'hljs-built_in': 'color:#56b6c2;',
+  'hljs-bullet': 'color:#61afef;',
+  'hljs-class': 'color:#e5c07b;',
+  'hljs-code': 'color:#abb2bf;',
+  'hljs-comment': 'color:#5c6370;font-style:italic;',
+  'hljs-deletion': 'color:#e06c75;',
+  'hljs-doctag': 'color:#c678dd;',
+  'hljs-emphasis': 'font-style:italic;',
+  'hljs-formula': 'color:#abb2bf;',
+  'hljs-function': 'color:#61afef;',
+  'hljs-keyword': 'color:#c678dd;',
+  'hljs-link': 'color:#56b6c2;',
+  'hljs-literal': 'color:#56b6c2;',
+  'hljs-meta': 'color:#61afef;',
+  'hljs-name': 'color:#e06c75;',
+  'hljs-number': 'color:#d19a66;',
+  'hljs-operator': 'color:#56b6c2;',
+  'hljs-params': 'color:#abb2bf;',
+  'hljs-property': 'color:#e06c75;',
+  'hljs-punctuation': 'color:#abb2bf;',
+  'hljs-quote': 'color:#5c6370;font-style:italic;',
+  'hljs-regexp': 'color:#98c379;',
+  'hljs-section': 'color:#61afef;',
+  'hljs-selector-attr': 'color:#d19a66;',
+  'hljs-selector-class': 'color:#e5c07b;',
+  'hljs-selector-id': 'color:#e5c07b;',
+  'hljs-selector-pseudo': 'color:#d19a66;',
+  'hljs-selector-tag': 'color:#e06c75;',
+  'hljs-string': 'color:#98c379;',
+  'hljs-strong': 'font-weight:bold;',
+  'hljs-subst': 'color:#abb2bf;',
+  'hljs-symbol': 'color:#56b6c2;',
+  'hljs-tag': 'color:#e06c75;',
+  'hljs-template-tag': 'color:#e06c75;',
+  'hljs-template-variable': 'color:#d19a66;',
+  'hljs-title': 'color:#61afef;',
+  'hljs-type': 'color:#e5c07b;',
+  'hljs-variable': 'color:#e06c75;',
+}
+
+const highlightLineStyle = 'line-height:26px;'
+
 export function renderMarkdown(
   markdown: string,
   options: RenderOptions = {},
@@ -37,6 +84,7 @@ export function renderMarkdown(
       .use(remarkParse)
       .use(remarkGfm)
       .use(remarkRehype)
+      .use(rehypeHighlight, { detect: false })
       .use(applyWechatTheme, theme)
       .use(rehypeStringify)
       .processSync(markdown),
@@ -82,6 +130,7 @@ function applyElementStyle(
 ) {
   sanitizeElementProperties(node)
   applyElementStructure(node, theme, parentTagName)
+  applyHighlightTokenStyle(node)
 
   const tagName = node.tagName
   if (!tagName) {
@@ -136,11 +185,109 @@ function applyElementStructure(
   }
 
   if (tagName === 'code' && parentTagName === 'pre') {
-    node.properties = {
-      ...node.properties,
-      className: ['hljs'],
+    addClassName(node, 'hljs')
+    materializeCodeWhitespace(node)
+  }
+}
+
+function applyHighlightTokenStyle(node: HastNode) {
+  const style = getHighlightTokenStyle(node)
+
+  if (!style) {
+    return
+  }
+
+  node.properties = {
+    ...node.properties,
+    style: mergeStyle(node.properties?.style, `${style}${highlightLineStyle}`),
+  }
+}
+
+function getHighlightTokenStyle(node: HastNode) {
+  const classNames = getClassNames(node)
+  const styles = classNames
+    .map((className) => highlightTokenStyles[className])
+    .filter((style): style is string => Boolean(style))
+
+  return styles.length > 0 ? styles.join('') : null
+}
+
+function materializeCodeWhitespace(node: HastNode) {
+  const children = node.children ?? []
+
+  trimTrailingCodeNewline(children)
+  node.children = materializeWhitespaceChildren(children)
+}
+
+function trimTrailingCodeNewline(children: HastNode[]) {
+  for (let index = children.length - 1; index >= 0; index -= 1) {
+    const child = children[index]
+
+    if (child.type === 'text' && typeof child.value === 'string') {
+      child.value = child.value.replace(/\n$/, '')
+
+      if (child.value.length === 0) {
+        children.splice(index, 1)
+      }
+
+      return
+    }
+
+    if (child.children && child.children.length > 0) {
+      trimTrailingCodeNewline(child.children)
+      return
     }
   }
+}
+
+function materializeWhitespaceChildren(children: HastNode[]) {
+  return children.flatMap((child) => {
+    if (child.type === 'text' && typeof child.value === 'string') {
+      return materializeWhitespaceNodes(child.value)
+    }
+
+    if (child.children) {
+      child.children = materializeWhitespaceChildren(child.children)
+    }
+
+    return [child]
+  })
+}
+
+function materializeWhitespaceNodes(value: string) {
+  const nodes: HastNode[] = []
+  let text = ''
+
+  for (const character of value) {
+    if (character === '\n') {
+      flushMaterializedText(nodes, text)
+      text = ''
+      nodes.push(createElement('br'))
+      continue
+    }
+
+    if (character === '\t') {
+      text += '\u00a0\u00a0\u00a0\u00a0'
+      continue
+    }
+
+    text += character === ' ' ? '\u00a0' : character
+  }
+
+  flushMaterializedText(nodes, text)
+
+  return nodes
+}
+
+function flushMaterializedText(nodes: HastNode[], value: string) {
+  if (value.length === 0) {
+    return
+  }
+
+  nodes.push({
+    type: 'text',
+    value,
+  })
 }
 
 function getElementStyle(
@@ -356,12 +503,7 @@ function createCodeBlockHeaderDots(theme: WechatTheme) {
 }
 
 function addClassName(node: HastNode, className: string) {
-  const existing = node.properties?.className
-  const classNames = Array.isArray(existing)
-    ? existing.map(String)
-    : typeof existing === 'string'
-      ? existing.split(/\s+/)
-      : []
+  const classNames = getClassNames(node)
 
   if (classNames.includes(className)) {
     return
@@ -371,6 +513,20 @@ function addClassName(node: HastNode, className: string) {
     ...node.properties,
     className: [...classNames, className],
   }
+}
+
+function getClassNames(node: HastNode) {
+  const existing = node.properties?.className
+
+  if (Array.isArray(existing)) {
+    return existing.map(String)
+  }
+
+  if (typeof existing === 'string') {
+    return existing.split(/\s+/).filter(Boolean)
+  }
+
+  return []
 }
 
 function escapeAttribute(value: string) {
