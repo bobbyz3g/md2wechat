@@ -22,12 +22,19 @@ body {
 }
 
 button,
-textarea {
+textarea,
+input {
   font: inherit;
 }
 
 button {
   touch-action: manipulation;
+}
+
+button:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .app-shell {
@@ -80,7 +87,40 @@ button {
   font-size: 14px;
 }
 
-.copy-button {
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.save-status {
+  display: inline-flex;
+  min-width: 72px;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: oklch(39% 0.028 60);
+  background: oklch(91% 0.017 75);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.save-status.saving,
+.save-status.dirty,
+.save-status.loading {
+  color: oklch(43% 0.11 75);
+  background: oklch(93% 0.045 78);
+}
+
+.save-status.failed {
+  color: oklch(41% 0.15 29);
+  background: oklch(93% 0.045 31);
+}
+
+.copy-button,
+.small-button {
   min-width: 116px;
   min-height: 40px;
   border: 0;
@@ -95,21 +135,41 @@ button {
   transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
 }
 
-.copy-button:active {
+.copy-button:active,
+.small-button:active {
   transform: scale(0.96);
 }
 
 .copy-button:focus-visible,
+.small-button:focus-visible,
+input:focus-visible,
 textarea:focus-visible {
   outline: 3px solid oklch(72% 0.12 64);
   outline-offset: 3px;
 }
 
+.small-button {
+  min-width: auto;
+  min-height: 32px;
+  padding: 0 10px;
+  color: oklch(30% 0.035 58);
+  background: oklch(91% 0.016 74);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.small-button.primary {
+  color: oklch(97% 0.012 76);
+  background: oklch(42% 0.075 150);
+  box-shadow: 0 7px 16px oklch(32% 0.07 150 / 16%);
+}
+
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 20px;
-  max-width: 1280px;
+  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  max-width: 1440px;
   min-height: calc(100vh - 108px);
   margin: 0 auto;
 }
@@ -127,12 +187,172 @@ textarea:focus-visible {
 }
 
 .pane-title {
+  display: flex;
   flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 12px 16px;
   color: oklch(43% 0.027 60);
   background: oklch(95% 0.014 72);
   font-size: 13px;
   font-weight: 700;
+}
+
+.library-pane {
+  background: oklch(96% 0.012 76);
+}
+
+.library-title {
+  min-height: 57px;
+}
+
+.library-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+}
+
+.tree-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.root-list {
+  gap: 12px;
+}
+
+.tree-item {
+  display: grid;
+  gap: 8px;
+}
+
+.directory-row,
+.article-row {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 8px;
+  color: oklch(24% 0.024 60);
+  background: oklch(98% 0.008 76);
+  text-align: left;
+}
+
+.directory-row {
+  box-shadow: 0 1px 3px oklch(35% 0.04 48 / 12%);
+}
+
+.article-row {
+  cursor: pointer;
+  transition-property: transform, background-color, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.article-row:active {
+  transform: scale(0.98);
+}
+
+.article-row.is-active {
+  color: oklch(22% 0.04 146);
+  background: oklch(91% 0.045 147);
+  box-shadow: inset 0 0 0 1px oklch(62% 0.09 149 / 28%);
+}
+
+.directory-marker,
+.article-dot {
+  flex: 0 0 auto;
+}
+
+.directory-marker {
+  width: 12px;
+  height: 9px;
+  border-radius: 3px 3px 2px 2px;
+  background: oklch(57% 0.074 68);
+  box-shadow: 0 -4px 0 -1px oklch(66% 0.08 74);
+}
+
+.article-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: oklch(55% 0.07 150);
+}
+
+.tree-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.row-note {
+  color: oklch(45% 0.03 62);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.depth-2 {
+  margin-left: 14px;
+}
+
+.create-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  border-radius: 8px;
+  padding: 8px;
+  background: oklch(93% 0.016 76);
+}
+
+.create-form input {
+  min-width: 0;
+  min-height: 32px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 10px;
+  color: oklch(22% 0.018 64);
+  background: oklch(99% 0.006 74);
+}
+
+.create-form input:focus {
+  outline: 0;
+}
+
+.empty-folder,
+.library-empty {
+  border-radius: 8px;
+  padding: 10px;
+  color: oklch(48% 0.027 60);
+  background: oklch(93% 0.014 74);
+  font-size: 13px;
+}
+
+.empty-folder {
+  margin-left: 20px;
+}
+
+.editor-title span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  color: oklch(28% 0.023 60);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editor-pane textarea {
@@ -149,6 +369,10 @@ textarea:focus-visible {
     monospace;
   font-size: 15px;
   line-height: 1.7;
+}
+
+.editor-pane textarea:disabled {
+  background: oklch(96% 0.01 74);
 }
 
 .editor-pane textarea:focus {
@@ -168,10 +392,50 @@ textarea:focus-visible {
   margin: 0 auto;
 }
 
+.app-message {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  max-width: min(420px, calc(100vw - 48px));
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: oklch(98% 0.01 74);
+  background: oklch(35% 0.12 31);
+  box-shadow: 0 12px 32px oklch(30% 0.08 31 / 24%);
+  font-size: 14px;
+  font-weight: 700;
+}
+
 @media (hover: hover) {
   .copy-button:hover {
     background: oklch(43% 0.105 49);
     box-shadow: 0 10px 22px oklch(43% 0.095 48 / 26%);
+  }
+
+  .small-button:hover {
+    background: oklch(87% 0.018 74);
+  }
+
+  .small-button.primary:hover {
+    background: oklch(36% 0.07 150);
+  }
+
+  .article-row:hover {
+    background: oklch(94% 0.018 76);
+  }
+
+  .article-row.is-active:hover {
+    background: oklch(90% 0.05 147);
+  }
+}
+
+@media (max-width: 1100px) {
+  .workspace {
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  }
+
+  .preview-pane {
+    grid-column: 1 / -1;
   }
 }
 
@@ -185,8 +449,16 @@ textarea:focus-visible {
     flex-direction: column;
   }
 
-  .copy-button {
+  .topbar-actions {
     width: 100%;
+  }
+
+  .save-status {
+    flex: 1;
+  }
+
+  .copy-button {
+    flex: 1;
   }
 
   .workspace {
@@ -196,6 +468,22 @@ textarea:focus-visible {
 
   .pane {
     min-height: 420px;
+  }
+
+  .library-pane {
+    min-height: 320px;
+  }
+
+  .row-actions {
+    width: 100%;
+  }
+
+  .directory-row {
+    flex-wrap: wrap;
+  }
+
+  .create-form {
+    grid-template-columns: 1fr;
   }
 }
 
