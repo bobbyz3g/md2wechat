@@ -4,6 +4,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  rename,
   stat,
   writeFile,
 } from 'node:fs/promises'
@@ -134,6 +135,80 @@ export async function createArticle(directoryPath, rawName, content = '') {
     type: 'article',
     name: getArticleName(fileName),
     path: joinPath(directory.relativePath, fileName),
+    updatedAt: fileStat.mtime.toISOString(),
+  }
+}
+
+export async function renameDirectory(directoryPath, rawName) {
+  const directory = resolveDirectoryPath(directoryPath ?? '')
+
+  if (directory.depth < 1) {
+    throw new ArticleStoreError(400, '不能重命名文章库根目录')
+  }
+
+  if (directory.depth > maxDirectoryDepth) {
+    throw new ArticleStoreError(400, '目录层级超过限制')
+  }
+
+  await assertDirectoryExists(directory.fullPath)
+
+  const name = validateName(rawName, '目录名')
+  const parentPath = path.dirname(directory.fullPath)
+  const targetPath = path.resolve(parentPath, name)
+  assertInsideArticleRoot(targetPath)
+
+  if (targetPath === directory.fullPath) {
+    return {
+      oldPath: directory.relativePath,
+      path: directory.relativePath,
+      name,
+    }
+  }
+
+  await assertPathAvailable(targetPath, '同名目录已存在')
+  await rename(directory.fullPath, targetPath)
+
+  const parentRelativePath = directory.relativePath
+    .split('/')
+    .slice(0, -1)
+    .join('/')
+
+  return {
+    oldPath: directory.relativePath,
+    path: joinPath(parentRelativePath, name),
+    name,
+  }
+}
+
+export async function renameArticle(articlePath, rawName) {
+  const article = resolveArticlePath(articlePath)
+  await assertFileExists(article.fullPath)
+
+  const fileName = normalizeArticleFileName(rawName)
+  const targetPath = path.resolve(path.dirname(article.fullPath), fileName)
+  assertInsideArticleRoot(targetPath)
+
+  if (targetPath === article.fullPath) {
+    const fileStat = await stat(article.fullPath)
+
+    return {
+      oldPath: article.relativePath,
+      path: article.relativePath,
+      name: getArticleName(fileName),
+      updatedAt: fileStat.mtime.toISOString(),
+    }
+  }
+
+  await assertPathAvailable(targetPath, '同名文章已存在')
+  await rename(article.fullPath, targetPath)
+
+  const fileStat = await stat(targetPath)
+  const parentRelativePath = article.relativePath.split('/').slice(0, -1).join('/')
+
+  return {
+    oldPath: article.relativePath,
+    path: joinPath(parentRelativePath, fileName),
+    name: getArticleName(fileName),
     updatedAt: fileStat.mtime.toISOString(),
   }
 }
@@ -351,6 +426,20 @@ async function assertFileExists(fullPath) {
 
     throw error
   }
+}
+
+async function assertPathAvailable(fullPath, message) {
+  try {
+    await access(fullPath, fsConstants.F_OK)
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return
+    }
+
+    throw error
+  }
+
+  throw new ArticleStoreError(409, message)
 }
 
 function assertInsideArticleRoot(fullPath) {

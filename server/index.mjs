@@ -8,6 +8,8 @@ import {
   ensureDefaultLibrary,
   getArticleTree,
   readArticle,
+  renameArticle,
+  renameDirectory,
   saveArticle,
 } from './articleStore.mjs'
 
@@ -59,6 +61,25 @@ const server = createServer(async (request, response) => {
       const article = await createArticle(body.directoryPath, body.name, content)
 
       sendJson(response, 201, article)
+      return
+    }
+
+    if (
+      request.method === 'PATCH' &&
+      url.pathname === '/api/articles/directories'
+    ) {
+      const body = await readJsonBody(request)
+      const directory = await renameDirectory(body.path, body.name)
+
+      sendJson(response, 200, directory)
+      return
+    }
+
+    if (request.method === 'PATCH' && url.pathname === '/api/articles') {
+      const body = await readJsonBody(request)
+      const article = await renameArticle(body.path, body.name)
+
+      sendJson(response, 200, article)
       return
     }
 

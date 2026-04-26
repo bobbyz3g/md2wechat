@@ -1,5 +1,6 @@
 import {
   type FormEvent,
+  type MouseEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -52,6 +53,29 @@ type ArticleContentResponse = {
   content: string
 }
 
+type NodeType = 'directory' | 'article'
+
+type MenuTarget = {
+  type: NodeType
+  path: string
+}
+
+type RenameTarget = {
+  type: NodeType
+  path: string
+  name: string
+}
+
+type DirectoryRenameResponse = {
+  oldPath: string
+  path: string
+  name: string
+}
+
+type ArticleRenameResponse = DirectoryRenameResponse & {
+  updatedAt: string
+}
+
 const maxDirectoryDepth = 2
 
 export function App() {
@@ -66,6 +90,10 @@ export function App() {
   const [createName, setCreateName] = useState('')
   const [isCreating, setIsCreating] = useState(false)
   const [switchingPath, setSwitchingPath] = useState<string | null>(null)
+  const [openMenu, setOpenMenu] = useState<MenuTarget | null>(null)
+  const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null)
+  const [renameName, setRenameName] = useState('')
+  const [isRenaming, setIsRenaming] = useState(false)
 
   const selectedPathRef = useRef<string | null>(null)
   const markdownRef = useRef('')
@@ -189,6 +217,49 @@ export function App() {
     }
   }, [lastSavedMarkdown, markdown, saveCurrentArticle, selectedPath])
 
+  useEffect(() => {
+    if (!openMenu) {
+      return
+    }
+
+    function handleDocumentClick() {
+      setOpenMenu(null)
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setOpenMenu(null)
+      }
+    }
+
+    window.addEventListener('click', handleDocumentClick)
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      window.removeEventListener('click', handleDocumentClick)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [openMenu])
+
+  useEffect(() => {
+    if (!renameTarget) {
+      return
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !isRenaming) {
+        setRenameTarget(null)
+        setRenameName('')
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isRenaming, renameTarget])
+
   async function handleCopy() {
     const saved = await saveCurrentArticle()
 
@@ -239,6 +310,7 @@ export function App() {
   }
 
   function startCreateDirectory(parentPath: string) {
+    setOpenMenu(null)
     setCreating({
       type: 'directory',
       parentPath,
@@ -248,12 +320,118 @@ export function App() {
   }
 
   function startCreateArticle(directoryPath: string) {
+    setOpenMenu(null)
     setCreating({
       type: 'article',
       directoryPath,
     })
     setCreateName('')
     setErrorMessage(null)
+  }
+
+  function toggleMenu(
+    event: MouseEvent<HTMLButtonElement>,
+    nextMenu: MenuTarget,
+  ) {
+    event.stopPropagation()
+    setCreating(null)
+    setErrorMessage(null)
+    setOpenMenu((currentMenu) =>
+      currentMenu?.type === nextMenu.type && currentMenu.path === nextMenu.path
+        ? null
+        : nextMenu,
+    )
+  }
+
+  function startRename(target: RenameTarget) {
+    setOpenMenu(null)
+    setCreating(null)
+    setRenameTarget(target)
+    setRenameName(target.name)
+    setErrorMessage(null)
+  }
+
+  async function handleRename(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    if (!renameTarget || isRenaming) {
+      return
+    }
+
+    const name = renameName.trim()
+
+    if (!name) {
+      setErrorMessage('名称不能为空')
+      return
+    }
+
+    setIsRenaming(true)
+
+    try {
+      const saved = await saveCurrentArticle()
+
+      if (!saved) {
+        return
+      }
+
+      const result =
+        renameTarget.type === 'directory'
+          ? await requestJson<DirectoryRenameResponse>(
+              '/api/articles/directories',
+              {
+                method: 'PATCH',
+                body: JSON.stringify({
+                  path: renameTarget.path,
+                  name,
+                }),
+              },
+            )
+          : await requestJson<ArticleRenameResponse>('/api/articles', {
+              method: 'PATCH',
+              body: JSON.stringify({
+                path: renameTarget.path,
+                name,
+              }),
+            })
+
+      syncSelectedPathAfterRename(renameTarget.type, result.oldPath, result.path)
+      await refreshTree()
+      setRenameTarget(null)
+      setRenameName('')
+      setErrorMessage(null)
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error))
+    } finally {
+      setIsRenaming(false)
+    }
+  }
+
+  function syncSelectedPathAfterRename(
+    targetType: NodeType,
+    oldPath: string,
+    nextPath: string,
+  ) {
+    const currentPath = selectedPathRef.current
+
+    if (!currentPath) {
+      return
+    }
+
+    if (targetType === 'article' && currentPath === oldPath) {
+      selectedPathRef.current = nextPath
+      setSelectedPath(nextPath)
+      return
+    }
+
+    if (
+      targetType === 'directory' &&
+      (currentPath === oldPath || currentPath.startsWith(`${oldPath}/`))
+    ) {
+      const renamedPath = `${nextPath}${currentPath.slice(oldPath.length)}`
+
+      selectedPathRef.current = renamedPath
+      setSelectedPath(renamedPath)
+    }
   }
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
@@ -339,50 +517,134 @@ export function App() {
     )
   }
 
+  function renderActionMenu(target: RenameTarget, canCreateDirectory = false) {
+    if (openMenu?.type !== target.type || openMenu.path !== target.path) {
+      return null
+    }
+
+    return (
+      <div
+        className="action-menu"
+        role="menu"
+        onClick={(event) => event.stopPropagation()}
+      >
+        {target.type === 'directory' ? (
+          <>
+            <button
+              className="menu-item"
+              role="menuitem"
+              type="button"
+              onClick={() => startCreateArticle(target.path)}
+            >
+              新文章
+            </button>
+            <button
+              className="menu-item"
+              role="menuitem"
+              type="button"
+              disabled={!canCreateDirectory}
+              onClick={() => startCreateDirectory(target.path)}
+            >
+              新目录
+            </button>
+          </>
+        ) : null}
+        <button
+          className="menu-item"
+          role="menuitem"
+          type="button"
+          onClick={() => startRename(target)}
+        >
+          重命名
+        </button>
+      </div>
+    )
+  }
+
   function renderTreeNode(node: TreeNode) {
     if (node.type === 'article') {
       const isActive = node.path === selectedPath
       const isSwitching = switchingPath === node.path
+      const isMenuOpen =
+        openMenu?.type === 'article' && openMenu.path === node.path
 
       return (
         <li className="tree-item" key={node.path}>
-          <button
+          <div
             className={`article-row${isActive ? ' is-active' : ''}`}
-            type="button"
-            disabled={saveState === 'loading' || Boolean(switchingPath)}
-            onClick={() => void handleSelectArticle(node.path)}
           >
-            <span className="article-dot" aria-hidden="true" />
-            <span className="tree-name">{node.name}</span>
-            {isSwitching ? <span className="row-note">切换中</span> : null}
-          </button>
+            <button
+              className="node-main article-main"
+              type="button"
+              disabled={saveState === 'loading' || Boolean(switchingPath)}
+              onClick={() => void handleSelectArticle(node.path)}
+            >
+              <span className="article-dot" aria-hidden="true" />
+              <span className="tree-name">{node.name}</span>
+              {isSwitching ? <span className="row-note">切换中</span> : null}
+            </button>
+            <div className="row-actions menu-shell">
+              <button
+                aria-expanded={isMenuOpen}
+                aria-haspopup="menu"
+                aria-label={`打开文章 ${node.name} 的更多操作`}
+                className="more-button"
+                type="button"
+                onClick={(event) =>
+                  toggleMenu(event, {
+                    type: 'article',
+                    path: node.path,
+                  })
+                }
+              >
+                ⋯
+              </button>
+              {renderActionMenu({
+                type: 'article',
+                path: node.path,
+                name: node.name,
+              })}
+            </div>
+          </div>
         </li>
       )
     }
 
     const canCreateDirectory = node.depth < maxDirectoryDepth
+    const isMenuOpen =
+      openMenu?.type === 'directory' && openMenu.path === node.path
 
     return (
       <li className={`tree-item depth-${node.depth}`} key={node.path}>
         <div className="directory-row">
-          <span className="directory-marker" aria-hidden="true" />
-          <span className="tree-name">{node.name}</span>
-          <div className="row-actions">
+          <div className="node-main directory-main">
+            <span className="directory-marker" aria-hidden="true" />
+            <span className="tree-name">{node.name}</span>
+          </div>
+          <div className="row-actions menu-shell">
             <button
-              className="small-button"
+              aria-expanded={isMenuOpen}
+              aria-haspopup="menu"
+              aria-label={`打开目录 ${node.name} 的更多操作`}
+              className="more-button"
               type="button"
-              onClick={() => startCreateArticle(node.path)}
+              onClick={(event) =>
+                toggleMenu(event, {
+                  type: 'directory',
+                  path: node.path,
+                })
+              }
             >
-              新文章
+              ⋯
             </button>
-            <button
-              className="small-button"
-              type="button"
-              disabled={!canCreateDirectory}
-              onClick={() => startCreateDirectory(node.path)}
-            >
-              新目录
-            </button>
+            {renderActionMenu(
+              {
+                type: 'directory',
+                path: node.path,
+                name: node.name,
+              },
+              canCreateDirectory,
+            )}
           </div>
         </div>
         {renderCreateForm(
@@ -491,6 +753,59 @@ export function App() {
       {errorMessage ? (
         <div className="app-message" role="alert">
           {errorMessage}
+        </div>
+      ) : null}
+
+      {renameTarget ? (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !isRenaming) {
+              setRenameTarget(null)
+              setRenameName('')
+            }
+          }}
+        >
+          <section
+            aria-labelledby="rename-title"
+            aria-modal="true"
+            className="rename-dialog"
+            role="dialog"
+          >
+            <form onSubmit={handleRename}>
+              <div className="dialog-title" id="rename-title">
+                {renameTarget.type === 'directory' ? '重命名目录' : '重命名文章'}
+              </div>
+              <input
+                aria-label={
+                  renameTarget.type === 'directory' ? '目录名' : '文章名'
+                }
+                autoFocus
+                value={renameName}
+                onChange={(event) => setRenameName(event.target.value)}
+              />
+              <div className="dialog-actions">
+                <button
+                  className="small-button"
+                  type="button"
+                  disabled={isRenaming}
+                  onClick={() => {
+                    setRenameTarget(null)
+                    setRenameName('')
+                  }}
+                >
+                  取消
+                </button>
+                <button
+                  className="small-button primary"
+                  type="submit"
+                  disabled={isRenaming}
+                >
+                  {isRenaming ? '保存中' : '保存'}
+                </button>
+              </div>
+            </form>
+          </section>
         </div>
       ) : null}
     </main>

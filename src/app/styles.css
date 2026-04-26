@@ -142,6 +142,8 @@ textarea:disabled {
 
 .copy-button:focus-visible,
 .small-button:focus-visible,
+.more-button:focus-visible,
+.menu-item:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
   outline: 3px solid oklch(72% 0.12 64);
@@ -246,18 +248,35 @@ textarea:focus-visible {
   text-align: left;
 }
 
+.node-main {
+  display: flex;
+  min-width: 0;
+  min-height: 32px;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.article-main {
+  cursor: pointer;
+}
+
 .directory-row {
   box-shadow: 0 1px 3px oklch(35% 0.04 48 / 12%);
 }
 
 .article-row {
-  cursor: pointer;
-  transition-property: transform, background-color, box-shadow;
+  transition-property: background-color, box-shadow;
   transition-duration: 150ms;
   transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
 }
 
-.article-row:active {
+.article-main:active {
   transform: scale(0.98);
 }
 
@@ -299,6 +318,68 @@ textarea:focus-visible {
   display: flex;
   flex: 0 0 auto;
   gap: 6px;
+}
+
+.menu-shell {
+  position: relative;
+}
+
+.more-button {
+  display: grid;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: oklch(34% 0.026 60);
+  background: oklch(91% 0.016 74);
+  box-shadow: none;
+  cursor: pointer;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  transition-property: transform, background-color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.more-button:active {
+  transform: scale(0.96);
+}
+
+.action-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  min-width: 112px;
+  overflow: hidden;
+  border-radius: 8px;
+  padding: 4px;
+  background: oklch(99% 0.006 74);
+  box-shadow:
+    0 1px 3px oklch(35% 0.04 48 / 16%),
+    0 16px 34px oklch(35% 0.04 48 / 18%);
+}
+
+.menu-item {
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 10px;
+  color: oklch(25% 0.024 60);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.menu-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .row-note {
@@ -406,6 +487,57 @@ textarea:focus-visible {
   font-weight: 700;
 }
 
+.modal-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: oklch(18% 0.02 62 / 38%);
+}
+
+.rename-dialog {
+  width: min(420px, 100%);
+  border-radius: 8px;
+  background: oklch(98% 0.009 73);
+  box-shadow:
+    0 2px 8px oklch(20% 0.025 58 / 18%),
+    0 22px 60px oklch(20% 0.025 58 / 28%);
+}
+
+.rename-dialog form {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.dialog-title {
+  color: oklch(22% 0.018 64);
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.rename-dialog input {
+  width: 100%;
+  min-height: 40px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: oklch(22% 0.018 64);
+  background: oklch(94% 0.014 72);
+}
+
+.rename-dialog input:focus {
+  outline: 0;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 @media (hover: hover) {
   .copy-button:hover {
     background: oklch(43% 0.105 49);
@@ -418,6 +550,11 @@ textarea:focus-visible {
 
   .small-button.primary:hover {
     background: oklch(36% 0.07 150);
+  }
+
+  .more-button:hover,
+  .menu-item:hover:not(:disabled) {
+    background: oklch(87% 0.018 74);
   }
 
   .article-row:hover {
@@ -475,11 +612,11 @@ textarea:focus-visible {
   }
 
   .row-actions {
-    width: 100%;
+    width: auto;
   }
 
   .directory-row {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
 
   .create-form {
@@ -488,7 +625,10 @@ textarea:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .copy-button {
+  .copy-button,
+  .small-button,
+  .more-button,
+  .article-row {
     transition-duration: 0ms;
   }
 }

@@ -33,6 +33,8 @@ md2wechat
 - `GET /api/articles/tree`：读取文章树。
 - `POST /api/articles/directories`：新增目录。
 - `POST /api/articles`：新增文章。
+- `PATCH /api/articles/directories`：重命名目录。
+- `PATCH /api/articles`：重命名文章。
 - `GET /api/articles/content?path=...`：读取文章内容。
 - `PUT /api/articles/content`：保存文章内容。
 
