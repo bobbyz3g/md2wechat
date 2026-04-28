@@ -84,6 +84,7 @@ type DeleteResponse = {
 
 const maxDirectoryDepth = 2
 const lastArticlePathStorageKey = 'md2wechat:lastArticlePath'
+const backToTopScrollThreshold = 160
 
 export function App() {
   const [tree, setTree] = useState<ArticleTree | null>(null)
@@ -106,6 +107,7 @@ export function App() {
     null,
   )
   const [isDeleting, setIsDeleting] = useState(false)
+  const [showBackToTop, setShowBackToTop] = useState(false)
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(
     () => new Set(),
   )
@@ -304,6 +306,33 @@ export function App() {
     }
   }, [deleteTarget, isDeleting])
 
+  useEffect(() => {
+    function updateBackToTopVisibility() {
+      const shouldShowBackToTop =
+        window.scrollY > backToTopScrollThreshold
+
+      setShowBackToTop((currentVisible) =>
+        currentVisible === shouldShowBackToTop
+          ? currentVisible
+          : shouldShowBackToTop,
+      )
+    }
+
+    updateBackToTopVisibility()
+    window.addEventListener('scroll', updateBackToTopVisibility, {
+      passive: true,
+    })
+
+    return () => {
+      window.removeEventListener('scroll', updateBackToTopVisibility)
+    }
+  }, [])
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'auto' })
+    setShowBackToTop(false)
+  }, [selectedPath])
+
   async function handleCopy() {
     const saved = await saveCurrentArticle()
 
@@ -326,6 +355,21 @@ export function App() {
 
     if (value !== lastSavedMarkdownRef.current) {
       setSaveState('dirty')
+    }
+  }
+
+  function handleBackToTop() {
+    const prefersReducedMotion = window.matchMedia(
+      '(prefers-reduced-motion: reduce)',
+    ).matches
+
+    window.scrollTo({
+      top: 0,
+      behavior: prefersReducedMotion ? 'auto' : 'smooth',
+    })
+
+    if (prefersReducedMotion) {
+      setShowBackToTop(false)
     }
   }
 
@@ -971,6 +1015,18 @@ export function App() {
           />
         </section>
       </section>
+
+      {showBackToTop ? (
+        <button
+          aria-label="返回页面顶部"
+          className="back-to-top-button"
+          title="返回顶部"
+          type="button"
+          onClick={handleBackToTop}
+        >
+          <span className="back-to-top-chevron" aria-hidden="true" />
+        </button>
+      ) : null}
 
       {errorMessage ? (
         <div className="app-message" role="alert">

@@ -174,6 +174,7 @@ textarea:disabled {
 
 .copy-button:focus-visible,
 .small-button:focus-visible,
+.back-to-top-button:focus-visible,
 .more-button:focus-visible,
 .menu-item:focus-visible,
 input:focus-visible,
@@ -541,6 +542,41 @@ textarea:focus-visible {
   margin: 0 auto;
 }
 
+.back-to-top-button {
+  position: fixed;
+  z-index: 15;
+  right: 16px;
+  bottom: 70px;
+  display: grid;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  background: oklch(98.6% 0.002 95 / 92%);
+  box-shadow:
+    0 0 0 1px oklch(82% 0.006 95 / 72%),
+    0 6px 18px oklch(30% 0.006 95 / 7%);
+  cursor: pointer;
+  transition-property: transform, background-color, color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+.back-to-top-chevron {
+  width: 9px;
+  height: 9px;
+  border-top: 2px solid currentColor;
+  border-left: 2px solid currentColor;
+  transform: translateY(3px) rotate(45deg);
+}
+
+.back-to-top-button:active {
+  transform: scale(0.97);
+}
+
 .app-message {
   position: fixed;
   right: 18px;
@@ -642,6 +678,11 @@ textarea:focus-visible {
     background: oklch(39% 0.14 28);
   }
 
+  .back-to-top-button:hover {
+    color: var(--color-text);
+    background: var(--color-paper);
+  }
+
   .more-button:hover,
   .menu-item:hover:not(:disabled) {
     background: var(--color-row-hover);
@@ -720,15 +761,24 @@ textarea:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .editor-pane textarea,
+  .editor-pane textarea {
+    padding: 18px;
+  }
+
   .wechat-preview {
     padding: 18px;
+  }
+
+  .back-to-top-button {
+    right: 12px;
+    bottom: 70px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .copy-button,
   .small-button,
+  .back-to-top-button,
   .more-button,
   .article-row {
     transition-duration: 0ms;
