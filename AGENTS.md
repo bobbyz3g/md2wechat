@@ -19,7 +19,7 @@
 4. 还没做完的 TODO
 
 # Commit 约束
-- 提交信息使用 `<type>[scope]: <message>` 格式。
+- 提交信息使用 `<type>(scope): <message>` 格式；`scope` 可选，省略时使用 `<type>: <message>`。
 - `type` 只使用：`feat`、`fix`、`docs`、`chore`。
 - `scope` 可选，用来标明影响范围，比如 `app`、`server`、`readme`。
 - `message` 用英文，简短描述本次变更，不以句号结尾。
