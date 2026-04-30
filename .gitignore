@@ -1,9 +1,16 @@
 node_modules
 dist
+web/node_modules/
+web/dist/
+web/coverage/
+web/.vite/
+/release/
 coverage
 .vite
 .codex
-articles/
+/articles/
+/md2wechat
+/md2wechat.exe
 *.local
 npm-debug.log*
 yarn-debug.log*

@@ -2,14 +2,22 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+const goCommand = process.platform === 'win32' ? 'go.exe' : 'go'
 const nodeBinDir = path.dirname(process.execPath)
 const childEnv = {
   ...process.env,
   PATH: `${nodeBinDir}${path.delimiter}${process.env.PATH ?? ''}`,
 }
 const children = [
-  spawn(npmCommand, ['run', 'dev:api'], { env: childEnv, stdio: 'inherit' }),
-  spawn(npmCommand, ['run', 'dev:web'], { env: childEnv, stdio: 'inherit' }),
+  spawn(
+    goCommand,
+    ['run', './cmd/md2wechat', '--no-open', '--article-root', 'articles'],
+    { env: childEnv, stdio: 'inherit' },
+  ),
+  spawn(npmCommand, ['--prefix', 'web', 'run', 'dev'], {
+    env: childEnv,
+    stdio: 'inherit',
+  }),
 ]
 let stopping = false
 

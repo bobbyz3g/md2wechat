@@ -330,7 +330,13 @@ export function App() {
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'auto' })
-    setShowBackToTop(false)
+    const frame = window.requestAnimationFrame(() => {
+      setShowBackToTop(false)
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+    }
   }, [selectedPath])
 
   async function handleCopy() {
