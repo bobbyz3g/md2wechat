@@ -14,6 +14,7 @@ import { renderMarkdown } from '../core/renderMarkdown'
 
 type CopyState = 'idle' | 'copied' | 'failed'
 type SaveState = 'loading' | 'saved' | 'dirty' | 'saving' | 'failed'
+type PreviewMode = 'desktop' | 'mobile'
 
 type ArticleNode = {
   type: 'article'
@@ -105,6 +106,7 @@ export function App() {
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null)
   const [saveState, setSaveState] = useState<SaveState>('loading')
   const [copyState, setCopyState] = useState<CopyState>('idle')
+  const [previewMode, setPreviewMode] = useState<PreviewMode>('desktop')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [creating, setCreating] = useState<CreateTarget | null>(null)
   const [createName, setCreateName] = useState('')
@@ -139,6 +141,7 @@ export function App() {
   const displayedSavedAt = selectedPath
     ? (lastSavedAt ?? currentArticle?.updatedAt ?? null)
     : null
+  const previewFrameClassName = `preview-frame is-${previewMode}`
 
   const loadArticle = useCallback(
     async (articlePath: string, articleUpdatedAt?: string) => {
@@ -1078,15 +1081,64 @@ export function App() {
         </label>
 
         <section className="pane preview-pane" aria-labelledby="preview-title">
-          <div className="pane-title" id="preview-title">
-            微信公众号预览
+          <div className="pane-title preview-toolbar">
+            <span id="preview-title">微信公众号预览</span>
+            <div className="device-toggle" role="group" aria-label="预览设备">
+              <button
+                className={`device-toggle-button${
+                  previewMode === 'desktop' ? ' is-active' : ''
+                }`}
+                type="button"
+                title="桌面预览"
+                aria-label="桌面预览"
+                aria-pressed={previewMode === 'desktop'}
+                onClick={() => {
+                  setPreviewMode('desktop')
+                }}
+              >
+                <svg
+                  className="device-toggle-icon"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="4" width="18" height="13" rx="2" />
+                  <path d="M8 21h8" />
+                  <path d="M12 17v4" />
+                </svg>
+              </button>
+              <button
+                className={`device-toggle-button${
+                  previewMode === 'mobile' ? ' is-active' : ''
+                }`}
+                type="button"
+                title="手机预览"
+                aria-label="手机预览"
+                aria-pressed={previewMode === 'mobile'}
+                onClick={() => {
+                  setPreviewMode('mobile')
+                }}
+              >
+                <svg
+                  className="device-toggle-icon"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <rect x="7" y="2" width="10" height="20" rx="2" />
+                  <path d="M11 18h2" />
+                </svg>
+              </button>
+            </div>
           </div>
           <article
             ref={previewScrollRef}
             className="wechat-preview"
             onScroll={handlePreviewScroll}
-            dangerouslySetInnerHTML={{ __html: rendered.html }}
-          />
+          >
+            <div
+              className={previewFrameClassName}
+              dangerouslySetInnerHTML={{ __html: rendered.html }}
+            />
+          </article>
         </section>
       </section>
 
