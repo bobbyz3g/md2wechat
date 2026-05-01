@@ -107,6 +107,7 @@ export function App() {
   const [saveState, setSaveState] = useState<SaveState>('loading')
   const [copyState, setCopyState] = useState<CopyState>('idle')
   const [previewMode, setPreviewMode] = useState<PreviewMode>('desktop')
+  const [isLibraryCollapsed, setIsLibraryCollapsed] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [creating, setCreating] = useState<CreateTarget | null>(null)
   const [createName, setCreateName] = useState('')
@@ -142,6 +143,12 @@ export function App() {
     ? (lastSavedAt ?? currentArticle?.updatedAt ?? null)
     : null
   const previewFrameClassName = `preview-frame is-${previewMode}`
+  const workspaceClassName = `workspace${
+    isLibraryCollapsed ? ' is-library-collapsed' : ''
+  }`
+  const libraryPaneClassName = `pane library-pane${
+    isLibraryCollapsed ? ' is-collapsed' : ''
+  }`
 
   const loadArticle = useCallback(
     async (articlePath: string, articleUpdatedAt?: string) => {
@@ -481,6 +488,21 @@ export function App() {
       }
 
       return nextDirectories
+    })
+  }
+
+  function toggleLibraryCollapsed() {
+    setOpenMenu(null)
+
+    setIsLibraryCollapsed((currentCollapsed) => {
+      const nextCollapsed = !currentCollapsed
+
+      if (nextCollapsed) {
+        setCreating(null)
+        setCreateName('')
+      }
+
+      return nextCollapsed
     })
   }
 
@@ -1032,34 +1054,71 @@ export function App() {
         </div>
       </header>
 
-      <section className="workspace" aria-label="Markdown 编辑和预览">
-        <aside className="pane library-pane" aria-label="文章管理">
+      <section className={workspaceClassName} aria-label="Markdown 编辑和预览">
+        <aside className={libraryPaneClassName} aria-label="文章管理">
           <div className="pane-title library-title">
-            <span>文章库</span>
-            <button
-              className="small-button primary"
-              type="button"
-              onClick={() => startCreateDirectory('')}
-            >
-              新目录
-            </button>
+            {isLibraryCollapsed ? null : <span>文章库</span>}
+            <div className="library-title-actions">
+              <button
+                className="library-collapse-button"
+                type="button"
+                title={isLibraryCollapsed ? '展开目录区域' : '收起目录区域'}
+                aria-label={
+                  isLibraryCollapsed ? '展开目录区域' : '收起目录区域'
+                }
+                aria-expanded={!isLibraryCollapsed}
+                onClick={toggleLibraryCollapsed}
+              >
+                <svg
+                  className="library-collapse-icon"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <path d="M9 4v16" />
+                  <path
+                    d={
+                      isLibraryCollapsed
+                        ? 'M14 9l3 3-3 3'
+                        : 'M16 9l-3 3 3 3'
+                    }
+                  />
+                </svg>
+              </button>
+              {isLibraryCollapsed ? null : (
+                <button
+                  className="small-button primary"
+                  type="button"
+                  onClick={() => startCreateDirectory('')}
+                >
+                  新目录
+                </button>
+              )}
+            </div>
           </div>
-          <div className="library-scroll">
-            {renderCreateForm(
-              creating?.type === 'directory' && creating.parentPath === '',
-            )}
-            {tree ? (
-              tree.children.length > 0 ? (
-                <ul className="tree-list root-list">
-                  {tree.children.map(renderTreeNode)}
-                </ul>
+          {isLibraryCollapsed ? (
+            <div className="library-collapsed-rail" aria-hidden="true">
+              <span className="library-collapsed-mark">文</span>
+              <span className="library-collapsed-label">文章库</span>
+            </div>
+          ) : (
+            <div className="library-scroll">
+              {renderCreateForm(
+                creating?.type === 'directory' && creating.parentPath === '',
+              )}
+              {tree ? (
+                tree.children.length > 0 ? (
+                  <ul className="tree-list root-list">
+                    {tree.children.map(renderTreeNode)}
+                  </ul>
+                ) : (
+                  <div className="library-empty">先创建一个目录</div>
+                )
               ) : (
-                <div className="library-empty">先创建一个目录</div>
-              )
-            ) : (
-              <div className="library-empty">正在读取文章库</div>
-            )}
-          </div>
+                <div className="library-empty">正在读取文章库</div>
+              )}
+            </div>
+          )}
         </aside>
 
         <label className="pane editor-pane">
