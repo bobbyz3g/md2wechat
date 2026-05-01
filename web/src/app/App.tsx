@@ -53,6 +53,16 @@ type ArticleContentResponse = {
   content: string
 }
 
+type ArticleSaveResponse = {
+  path: string
+  updatedAt: string
+}
+
+type ArticleStats = {
+  characterCount: number
+  readTimeMinutes: number
+}
+
 type NodeType = 'directory' | 'article'
 
 type MenuTarget = {
@@ -85,12 +95,14 @@ type DeleteResponse = {
 const maxDirectoryDepth = 2
 const lastArticlePathStorageKey = 'md2wechat:lastArticlePath'
 const backToTopScrollThreshold = 160
+const readingUnitsPerMinute = 300
 
 export function App() {
   const [tree, setTree] = useState<ArticleTree | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [markdown, setMarkdown] = useState('')
   const [lastSavedMarkdown, setLastSavedMarkdown] = useState('')
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null)
   const [saveState, setSaveState] = useState<SaveState>('loading')
   const [copyState, setCopyState] = useState<CopyState>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -121,25 +133,33 @@ export function App() {
     () => (tree && selectedPath ? findArticle(tree, selectedPath) : null),
     [selectedPath, tree],
   )
+  const articleStats = useMemo(() => getArticleStats(markdown), [markdown])
+  const displayedSavedAt = selectedPath
+    ? (lastSavedAt ?? currentArticle?.updatedAt ?? null)
+    : null
 
-  const loadArticle = useCallback(async (articlePath: string) => {
-    setSaveState('loading')
-    const article = await requestJson<ArticleContentResponse>(
-      `/api/articles/content?path=${encodeURIComponent(articlePath)}`,
-    )
+  const loadArticle = useCallback(
+    async (articlePath: string, articleUpdatedAt?: string) => {
+      setSaveState('loading')
+      const article = await requestJson<ArticleContentResponse>(
+        `/api/articles/content?path=${encodeURIComponent(articlePath)}`,
+      )
 
-    selectedPathRef.current = articlePath
-    markdownRef.current = article.content
-    lastSavedMarkdownRef.current = article.content
+      selectedPathRef.current = articlePath
+      markdownRef.current = article.content
+      lastSavedMarkdownRef.current = article.content
 
-    writeLastArticlePath(articlePath)
-    setSelectedPath(articlePath)
-    setMarkdown(article.content)
-    setLastSavedMarkdown(article.content)
-    setCopyState('idle')
-    setErrorMessage(null)
-    setSaveState('saved')
-  }, [])
+      writeLastArticlePath(articlePath)
+      setSelectedPath(articlePath)
+      setMarkdown(article.content)
+      setLastSavedMarkdown(article.content)
+      setLastSavedAt(articleUpdatedAt ?? null)
+      setCopyState('idle')
+      setErrorMessage(null)
+      setSaveState('saved')
+    },
+    [],
+  )
 
   const refreshTree = useCallback(async () => {
     const nextTree = await requestJson<ArticleTree>('/api/articles/tree')
@@ -164,14 +184,27 @@ export function App() {
     setSaveState('saving')
 
     try {
-      await requestJson('/api/articles/content', {
-        method: 'PUT',
-        body: JSON.stringify({
-          path: articlePath,
-          content: currentMarkdown,
-        }),
-      })
+      const result = await requestJson<ArticleSaveResponse>(
+        '/api/articles/content',
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            path: articlePath,
+            content: currentMarkdown,
+          }),
+        },
+      )
 
+      setTree((currentTree) =>
+        currentTree
+          ? updateArticleUpdatedAt(
+              currentTree,
+              result.path,
+              result.updatedAt,
+            )
+          : currentTree,
+      )
+      setLastSavedAt(result.updatedAt)
       lastSavedMarkdownRef.current = currentMarkdown
       setLastSavedMarkdown(currentMarkdown)
       setSaveState(
@@ -209,10 +242,11 @@ export function App() {
           setExpandedDirectories(
             new Set(getParentDirectoryPaths(initialArticle.path)),
           )
-          await loadArticle(initialArticle.path)
+          await loadArticle(initialArticle.path, initialArticle.updatedAt)
         } else {
           clearLastArticlePath()
           setExpandedDirectories(new Set())
+          setLastSavedAt(null)
           setSaveState('saved')
         }
       } catch (error) {
@@ -394,7 +428,9 @@ export function App() {
     }
 
     try {
-      await loadArticle(articlePath)
+      const article = tree ? findArticle(tree, articlePath) : null
+
+      await loadArticle(articlePath, article?.updatedAt)
     } catch (error) {
       setSaveState('failed')
       setErrorMessage(getErrorMessage(error))
@@ -508,29 +544,33 @@ export function App() {
         return
       }
 
-      const result =
-        renameTarget.type === 'directory'
-          ? await requestJson<DirectoryRenameResponse>(
-              '/api/articles/directories',
-              {
-                method: 'PATCH',
-                body: JSON.stringify({
-                  path: renameTarget.path,
-                  name,
-                }),
-              },
-            )
-          : await requestJson<ArticleRenameResponse>('/api/articles', {
-              method: 'PATCH',
-              body: JSON.stringify({
-                path: renameTarget.path,
-                name,
-              }),
-            })
-
-      syncSelectedPathAfterRename(renameTarget.type, result.oldPath, result.path)
       if (renameTarget.type === 'directory') {
+        const result = await requestJson<DirectoryRenameResponse>(
+          '/api/articles/directories',
+          {
+            method: 'PATCH',
+            body: JSON.stringify({
+              path: renameTarget.path,
+              name,
+            }),
+          },
+        )
+
+        syncSelectedPathAfterRename('directory', result.oldPath, result.path)
         syncExpandedDirectoriesAfterDirectoryRename(result.oldPath, result.path)
+      } else {
+        const result = await requestJson<ArticleRenameResponse>('/api/articles', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            path: renameTarget.path,
+            name,
+          }),
+        })
+
+        syncSelectedPathAfterRename('article', result.oldPath, result.path)
+        if (selectedPathRef.current === result.path) {
+          setLastSavedAt(result.updatedAt)
+        }
       }
       await refreshTree()
       setRenameTarget(null)
@@ -622,6 +662,7 @@ export function App() {
     setSelectedPath(null)
     setMarkdown('')
     setLastSavedMarkdown('')
+    setLastSavedAt(null)
     setCopyState('idle')
     setSaveState('saved')
   }
@@ -725,7 +766,7 @@ export function App() {
         })
 
         await refreshTree()
-        await loadArticle(article.path)
+        await loadArticle(article.path, article.updatedAt)
       }
 
       setCreating(null)
@@ -937,19 +978,27 @@ export function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            文
-          </span>
-          <div>
-            <h1>md2wechat</h1>
-            <p>Markdown 排版工作台</p>
+        <div className="topbar-left">
+          <div className="brand">
+            <span className="brand-mark" aria-hidden="true">
+              文
+            </span>
+            <div>
+              <h1>md2wechat</h1>
+              <p>Markdown 排版工作台</p>
+            </div>
+          </div>
+          <div className="current-article" aria-live="polite">
+            <span className="current-article-label">当前文章</span>
+            <span className="current-article-name">
+              {currentArticle?.name ?? '未选择文章'}
+            </span>
+            <span className="current-article-path">
+              {selectedPath ?? '从左侧文章库选择或创建文章'}
+            </span>
           </div>
         </div>
         <div className="topbar-actions">
-          <span className={`save-status ${saveState}`}>
-            {getSaveStateText(saveState)}
-          </span>
           <button
             className="copy-button"
             type="button"
@@ -1021,6 +1070,27 @@ export function App() {
           />
         </section>
       </section>
+
+      <footer className="status-bar" aria-label="文章状态">
+        <span className={`status-item status-save ${saveState}`}>
+          {getSaveStateText(saveState)}
+        </span>
+        <span className="status-divider" aria-hidden="true" />
+        <span className="status-item">
+          字数：
+          <span className="status-value">{articleStats.characterCount}</span>
+        </span>
+        <span className="status-item">
+          阅读：
+          <span className="status-value">
+            {formatReadTime(articleStats.readTimeMinutes)}
+          </span>
+        </span>
+        <span className="status-item">
+          最后保存：
+          <span className="status-value">{formatSavedAt(displayedSavedAt)}</span>
+        </span>
+      </footer>
 
       {showBackToTop ? (
         <button
@@ -1192,6 +1262,43 @@ function getSaveStateText(saveState: SaveState) {
   }
 }
 
+function getArticleStats(markdown: string): ArticleStats {
+  const characterCount = markdown.replace(/\s/g, '').length
+  const readTimeMinutes =
+    characterCount === 0
+      ? 0
+      : Math.max(1, Math.ceil(characterCount / readingUnitsPerMinute))
+
+  return {
+    characterCount,
+    readTimeMinutes,
+  }
+}
+
+function formatReadTime(readTimeMinutes: number) {
+  return `${readTimeMinutes} 分钟`
+}
+
+function formatSavedAt(savedAt: string | null) {
+  if (!savedAt) {
+    return '--'
+  }
+
+  const date = new Date(savedAt)
+
+  if (Number.isNaN(date.getTime())) {
+    return '--'
+  }
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
+}
+
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
     return error.message
@@ -1235,6 +1342,59 @@ function findArticle(
   }
 
   return null
+}
+
+function updateArticleUpdatedAt(
+  tree: ArticleTree,
+  articlePath: string,
+  updatedAt: string,
+): ArticleTree {
+  const [children, changed] = updateArticleChildrenUpdatedAt(
+    tree.children,
+    articlePath,
+    updatedAt,
+  )
+
+  return changed ? { ...tree, children } : tree
+}
+
+function updateArticleChildrenUpdatedAt(
+  children: TreeNode[],
+  articlePath: string,
+  updatedAt: string,
+): [TreeNode[], boolean] {
+  let changed = false
+  const nextChildren = children.map((child) => {
+    if (child.type === 'article') {
+      if (child.path !== articlePath) {
+        return child
+      }
+
+      changed = true
+      return {
+        ...child,
+        updatedAt,
+      }
+    }
+
+    const [nextNestedChildren, nestedChanged] = updateArticleChildrenUpdatedAt(
+      child.children,
+      articlePath,
+      updatedAt,
+    )
+
+    if (!nestedChanged) {
+      return child
+    }
+
+    changed = true
+    return {
+      ...child,
+      children: nextNestedChildren,
+    }
+  })
+
+  return [nextChildren, changed]
 }
 
 function readLastArticlePath() {
