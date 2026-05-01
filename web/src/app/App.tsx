@@ -1,6 +1,7 @@
 import {
   type FormEvent,
   type MouseEvent,
+  type UIEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -94,7 +95,6 @@ type DeleteResponse = {
 
 const maxDirectoryDepth = 2
 const lastArticlePathStorageKey = 'md2wechat:lastArticlePath'
-const backToTopScrollThreshold = 160
 const readingUnitsPerMinute = 300
 
 export function App() {
@@ -119,7 +119,6 @@ export function App() {
     null,
   )
   const [isDeleting, setIsDeleting] = useState(false)
-  const [showBackToTop, setShowBackToTop] = useState(false)
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(
     () => new Set(),
   )
@@ -127,6 +126,9 @@ export function App() {
   const selectedPathRef = useRef<string | null>(null)
   const markdownRef = useRef('')
   const lastSavedMarkdownRef = useRef('')
+  const editorScrollRef = useRef<HTMLTextAreaElement | null>(null)
+  const previewScrollRef = useRef<HTMLElement | null>(null)
+  const syncScrollLockRef = useRef(false)
 
   const rendered = useMemo(() => renderMarkdown(markdown), [markdown])
   const currentArticle = useMemo(
@@ -217,6 +219,37 @@ export function App() {
       setErrorMessage(getErrorMessage(error))
       return false
     }
+  }, [])
+
+  const resetPaneScrollPositions = useCallback(() => {
+    syncScrollLockRef.current = false
+
+    if (editorScrollRef.current) {
+      editorScrollRef.current.scrollTop = 0
+    }
+
+    if (previewScrollRef.current) {
+      previewScrollRef.current.scrollTop = 0
+    }
+  }, [])
+
+  const syncScroll = useCallback((source: HTMLElement, target: HTMLElement) => {
+    if (syncScrollLockRef.current) {
+      return
+    }
+
+    syncScrollLockRef.current = true
+
+    const sourceScrollRange = source.scrollHeight - source.clientHeight
+    const targetScrollRange = target.scrollHeight - target.clientHeight
+    const scrollRatio =
+      sourceScrollRange > 0 ? source.scrollTop / sourceScrollRange : 0
+
+    target.scrollTop = targetScrollRange > 0 ? scrollRatio * targetScrollRange : 0
+
+    window.requestAnimationFrame(() => {
+      syncScrollLockRef.current = false
+    })
   }, [])
 
   useEffect(() => {
@@ -341,37 +374,14 @@ export function App() {
   }, [deleteTarget, isDeleting])
 
   useEffect(() => {
-    function updateBackToTopVisibility() {
-      const shouldShowBackToTop =
-        window.scrollY > backToTopScrollThreshold
-
-      setShowBackToTop((currentVisible) =>
-        currentVisible === shouldShowBackToTop
-          ? currentVisible
-          : shouldShowBackToTop,
-      )
-    }
-
-    updateBackToTopVisibility()
-    window.addEventListener('scroll', updateBackToTopVisibility, {
-      passive: true,
-    })
-
-    return () => {
-      window.removeEventListener('scroll', updateBackToTopVisibility)
-    }
-  }, [])
-
-  useEffect(() => {
-    window.scrollTo({ top: 0, behavior: 'auto' })
     const frame = window.requestAnimationFrame(() => {
-      setShowBackToTop(false)
+      resetPaneScrollPositions()
     })
 
     return () => {
       window.cancelAnimationFrame(frame)
     }
-  }, [selectedPath])
+  }, [resetPaneScrollPositions, selectedPath])
 
   async function handleCopy() {
     const saved = await saveCurrentArticle()
@@ -398,19 +408,24 @@ export function App() {
     }
   }
 
-  function handleBackToTop() {
-    const prefersReducedMotion = window.matchMedia(
-      '(prefers-reduced-motion: reduce)',
-    ).matches
+  function handleEditorScroll(event: UIEvent<HTMLTextAreaElement>) {
+    const preview = previewScrollRef.current
 
-    window.scrollTo({
-      top: 0,
-      behavior: prefersReducedMotion ? 'auto' : 'smooth',
-    })
-
-    if (prefersReducedMotion) {
-      setShowBackToTop(false)
+    if (!preview) {
+      return
     }
+
+    syncScroll(event.currentTarget, preview)
+  }
+
+  function handlePreviewScroll(event: UIEvent<HTMLElement>) {
+    const editor = editorScrollRef.current
+
+    if (!editor) {
+      return
+    }
+
+    syncScroll(event.currentTarget, editor)
   }
 
   async function handleSelectArticle(articlePath: string) {
@@ -1050,11 +1065,13 @@ export function App() {
             <span>{currentArticle?.name ?? '未选择文章'}</span>
           </span>
           <textarea
+            ref={editorScrollRef}
             value={markdown}
             disabled={!selectedPath || saveState === 'loading'}
             onChange={(event) => {
               handleMarkdownChange(event.target.value)
             }}
+            onScroll={handleEditorScroll}
             placeholder="选择左侧文章后开始编辑"
             spellCheck={false}
           />
@@ -1065,7 +1082,9 @@ export function App() {
             微信公众号预览
           </div>
           <article
+            ref={previewScrollRef}
             className="wechat-preview"
+            onScroll={handlePreviewScroll}
             dangerouslySetInnerHTML={{ __html: rendered.html }}
           />
         </section>
@@ -1091,18 +1110,6 @@ export function App() {
           <span className="status-value">{formatSavedAt(displayedSavedAt)}</span>
         </span>
       </footer>
-
-      {showBackToTop ? (
-        <button
-          aria-label="返回页面顶部"
-          className="back-to-top-button"
-          title="返回顶部"
-          type="button"
-          onClick={handleBackToTop}
-        >
-          <span className="back-to-top-chevron" aria-hidden="true" />
-        </button>
-      ) : null}
 
       {errorMessage ? (
         <div className="app-message" role="alert">
