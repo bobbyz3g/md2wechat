@@ -43,9 +43,15 @@ func NewHandler() http.Handler {
 }
 
 func serveEmbeddedIndex(response http.ResponseWriter, request *http.Request, dist fs.FS) {
-	request = request.Clone(request.Context())
-	request.URL.Path = "/index.html"
-	http.FileServer(http.FS(dist)).ServeHTTP(response, request)
+	indexContent, err := fs.ReadFile(dist, "index.html")
+	if err != nil {
+		http.Error(response, "index.html not found", http.StatusInternalServerError)
+		return
+	}
+
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	response.WriteHeader(http.StatusOK)
+	_, _ = response.Write(indexContent)
 }
 
 func fileExists(dist fs.FS, name string) bool {
