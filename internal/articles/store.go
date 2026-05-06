@@ -16,16 +16,6 @@ import (
 const (
 	maxDirectoryDepth = 2
 	articleExtension  = ".md"
-	defaultMarkdown   = "# 春日读书笔记\n\n" +
-		"午后重读《长安的荔枝》，最打动我的还是那些看似细碎的执行细节。\n\n" +
-		"> 真正困难的不是想法，而是把每一步都落到可验证的现实里。\n\n" +
-		"## 摘录\n\n" +
-		"- 时间会放大流程里的缝隙\n" +
-		"- 好方案通常先解决最确定的问题\n" +
-		"- 复杂系统需要留下回退空间\n\n" +
-		"```ts\n" +
-		"const note = '先把路走通，再谈优雅'\n" +
-		"```\n"
 )
 
 type storeError struct {
@@ -87,29 +77,6 @@ func (store *Store) Root() string {
 
 func (store *Store) Close() error {
 	return store.rootHandle.Close()
-}
-
-func (store *Store) EnsureDefaultLibrary() error {
-	defaultDirectory := "默认目录"
-	defaultArticle := filepath.Join(defaultDirectory, "春日读书笔记.md")
-
-	if err := store.rootHandle.MkdirAll(defaultDirectory, 0o755); err != nil {
-		return err
-	}
-
-	file, err := store.rootHandle.OpenFile(defaultArticle, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if errors.Is(err, fs.ErrExist) {
-		return nil
-	}
-
-	if err != nil {
-		return err
-	}
-
-	defer file.Close()
-	_, err = file.WriteString(defaultMarkdown)
-
-	return err
 }
 
 func (store *Store) GetArticleTree() (any, error) {

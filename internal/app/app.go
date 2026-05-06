@@ -38,10 +38,6 @@ func Run() error {
 	}
 	defer store.Close()
 
-	if err := store.EnsureDefaultLibrary(); err != nil {
-		return err
-	}
-
 	listener, actualPort, err := listen(config.host, config.port)
 	if err != nil {
 		return err
