@@ -280,13 +280,12 @@ export function App() {
         const lastArticle = lastArticlePath
           ? findArticle(nextTree, lastArticlePath)
           : null
-        const initialArticle = lastArticle ?? findFirstArticle(nextTree)
 
-        if (initialArticle) {
+        if (lastArticle) {
           setExpandedDirectories(
-            new Set(getParentDirectoryPaths(initialArticle.path)),
+            new Set(getParentDirectoryPaths(lastArticle.path)),
           )
-          await loadArticle(initialArticle.path, initialArticle.updatedAt)
+          await loadArticle(lastArticle.path, lastArticle.updatedAt)
         } else {
           clearLastArticlePath()
           setExpandedDirectories(new Set())
@@ -1481,22 +1480,6 @@ function getErrorMessage(error: unknown) {
   }
 
   return '操作失败'
-}
-
-function findFirstArticle(tree: ArticleTree | DirectoryNode): ArticleNode | null {
-  for (const child of tree.children) {
-    if (child.type === 'article') {
-      return child
-    }
-
-    const article = findFirstArticle(child)
-
-    if (article) {
-      return article
-    }
-  }
-
-  return null
 }
 
 function findArticle(
