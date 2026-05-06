@@ -11,6 +11,7 @@ import {
 
 import { copyWechatHtml } from '../clipboard/copyWechatHtml'
 import { renderMarkdown } from '../core/renderMarkdown'
+import { isThemeId, themeList, type ThemeId } from '../core/themes'
 
 type CopyState = 'idle' | 'copied' | 'failed'
 type SaveState = 'loading' | 'saved' | 'dirty' | 'saving' | 'failed'
@@ -96,6 +97,7 @@ type DeleteResponse = {
 
 const maxDirectoryDepth = 2
 const lastArticlePathStorageKey = 'md2wechat:lastArticlePath'
+const themeIdStorageKey = 'md2wechat:themeId'
 const readingUnitsPerMinute = 300
 
 export function App() {
@@ -107,6 +109,7 @@ export function App() {
   const [saveState, setSaveState] = useState<SaveState>('loading')
   const [copyState, setCopyState] = useState<CopyState>('idle')
   const [previewMode, setPreviewMode] = useState<PreviewMode>('desktop')
+  const [themeId, setThemeId] = useState<ThemeId>(() => readThemeId())
   const [isLibraryCollapsed, setIsLibraryCollapsed] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [creating, setCreating] = useState<CreateTarget | null>(null)
@@ -134,7 +137,10 @@ export function App() {
   const previewScrollRef = useRef<HTMLElement | null>(null)
   const syncScrollLockRef = useRef(false)
 
-  const rendered = useMemo(() => renderMarkdown(markdown), [markdown])
+  const rendered = useMemo(
+    () => renderMarkdown(markdown, { themeId }),
+    [markdown, themeId],
+  )
   const currentArticle = useMemo(
     () => (tree && selectedPath ? findArticle(tree, selectedPath) : null),
     [selectedPath, tree],
@@ -438,6 +444,16 @@ export function App() {
     }
 
     syncScroll(event.currentTarget, editor)
+  }
+
+  function handleThemeChange(nextThemeId: string) {
+    if (!isThemeId(nextThemeId)) {
+      return
+    }
+
+    writeThemeId(nextThemeId)
+    setThemeId(nextThemeId)
+    setCopyState('idle')
   }
 
   async function handleSelectArticle(articlePath: string) {
@@ -1199,50 +1215,68 @@ export function App() {
         <section className="pane preview-pane" aria-labelledby="preview-title">
           <div className="pane-title preview-toolbar">
             <span id="preview-title">微信公众号预览</span>
-            <div className="device-toggle" role="group" aria-label="预览设备">
-              <button
-                className={`device-toggle-button${
-                  previewMode === 'desktop' ? ' is-active' : ''
-                }`}
-                type="button"
-                title="桌面预览"
-                aria-label="桌面预览"
-                aria-pressed={previewMode === 'desktop'}
-                onClick={() => {
-                  setPreviewMode('desktop')
-                }}
-              >
-                <svg
-                  className="device-toggle-icon"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
+            <div className="preview-toolbar-actions">
+              <label className="theme-select-label">
+                <span>主题</span>
+                <select
+                  className="theme-select"
+                  value={themeId}
+                  onChange={(event) => {
+                    handleThemeChange(event.target.value)
+                  }}
                 >
-                  <rect x="3" y="4" width="18" height="13" rx="2" />
-                  <path d="M8 21h8" />
-                  <path d="M12 17v4" />
-                </svg>
-              </button>
-              <button
-                className={`device-toggle-button${
-                  previewMode === 'mobile' ? ' is-active' : ''
-                }`}
-                type="button"
-                title="手机预览"
-                aria-label="手机预览"
-                aria-pressed={previewMode === 'mobile'}
-                onClick={() => {
-                  setPreviewMode('mobile')
-                }}
-              >
-                <svg
-                  className="device-toggle-icon"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
+                  {themeList.map((theme) => (
+                    <option key={theme.id} value={theme.id}>
+                      {theme.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="device-toggle" role="group" aria-label="预览设备">
+                <button
+                  className={`device-toggle-button${
+                    previewMode === 'desktop' ? ' is-active' : ''
+                  }`}
+                  type="button"
+                  title="桌面预览"
+                  aria-label="桌面预览"
+                  aria-pressed={previewMode === 'desktop'}
+                  onClick={() => {
+                    setPreviewMode('desktop')
+                  }}
                 >
-                  <rect x="7" y="2" width="10" height="20" rx="2" />
-                  <path d="M11 18h2" />
-                </svg>
-              </button>
+                  <svg
+                    className="device-toggle-icon"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <rect x="3" y="4" width="18" height="13" rx="2" />
+                    <path d="M8 21h8" />
+                    <path d="M12 17v4" />
+                  </svg>
+                </button>
+                <button
+                  className={`device-toggle-button${
+                    previewMode === 'mobile' ? ' is-active' : ''
+                  }`}
+                  type="button"
+                  title="手机预览"
+                  aria-label="手机预览"
+                  aria-pressed={previewMode === 'mobile'}
+                  onClick={() => {
+                    setPreviewMode('mobile')
+                  }}
+                >
+                  <svg
+                    className="device-toggle-icon"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <rect x="7" y="2" width="10" height="20" rx="2" />
+                    <path d="M11 18h2" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
           <article
@@ -1587,6 +1621,32 @@ function clearLastArticlePath() {
 
   try {
     window.localStorage.removeItem(lastArticlePathStorageKey)
+  } catch {
+    return
+  }
+}
+
+function readThemeId(): ThemeId {
+  if (typeof window === 'undefined') {
+    return 'default'
+  }
+
+  try {
+    const value = window.localStorage.getItem(themeIdStorageKey)
+
+    return isThemeId(value) ? value : 'default'
+  } catch {
+    return 'default'
+  }
+}
+
+function writeThemeId(themeId: ThemeId) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(themeIdStorageKey, themeId)
   } catch {
     return
   }

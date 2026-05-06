@@ -64,7 +64,8 @@ body {
 
 button,
 textarea,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -679,6 +680,42 @@ textarea:focus-visible {
   padding: 7px 10px 7px 12px;
 }
 
+.preview-toolbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.theme-select-label {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.theme-select {
+  min-width: 96px;
+  height: 30px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 0 28px 0 10px;
+  color: var(--color-text-soft);
+  background: var(--color-paper-muted);
+  box-shadow: inset 0 0 0 1px var(--color-line);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.theme-select:focus-visible {
+  outline: 2px solid oklch(69% 0.08 255);
+  outline-offset: 2px;
+}
+
 .device-toggle {
   display: inline-flex;
   flex: 0 0 auto;
@@ -1078,6 +1115,23 @@ textarea:focus-visible {
 
   .editor-pane textarea {
     padding: 18px;
+  }
+
+  .preview-toolbar {
+    gap: 8px;
+  }
+
+  .preview-toolbar-actions {
+    gap: 6px;
+  }
+
+  .theme-select-label > span {
+    display: none;
+  }
+
+  .theme-select {
+    min-width: 84px;
+    max-width: 116px;
   }
 
   .wechat-preview {
