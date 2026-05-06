@@ -518,6 +518,14 @@ textarea:focus-visible {
   position: relative;
 }
 
+.create-menu-shell {
+  position: relative;
+}
+
+.create-menu {
+  min-width: 120px;
+}
+
 .more-button {
   display: grid;
   width: 28px;

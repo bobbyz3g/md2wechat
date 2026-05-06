@@ -138,10 +138,6 @@ func (store *Store) CreateArticle(directoryPath string, rawName any, content str
 		return nil, err
 	}
 
-	if directory.depth < 1 {
-		return nil, &storeError{statusCode: http.StatusBadRequest, message: "文章必须创建在目录中"}
-	}
-
 	if directory.depth > maxDirectoryDepth {
 		return nil, &storeError{statusCode: http.StatusBadRequest, message: "目录层级超过限制"}
 	}
@@ -478,10 +474,6 @@ func (store *Store) resolveArticlePath(relativePath string) (resolvedArticle, er
 
 	if len(segments) == 0 || !strings.HasSuffix(segments[len(segments)-1], articleExtension) {
 		return resolvedArticle{}, &storeError{statusCode: http.StatusBadRequest, message: "文章路径必须指向 .md 文件"}
-	}
-
-	if len(segments) < 2 {
-		return resolvedArticle{}, &storeError{statusCode: http.StatusBadRequest, message: "文章必须位于目录中"}
 	}
 
 	directoryDepth := len(segments) - 1

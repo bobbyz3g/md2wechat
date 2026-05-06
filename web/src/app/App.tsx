@@ -113,6 +113,7 @@ export function App() {
   const [createName, setCreateName] = useState('')
   const [isCreating, setIsCreating] = useState(false)
   const [switchingPath, setSwitchingPath] = useState<string | null>(null)
+  const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false)
   const [openMenu, setOpenMenu] = useState<MenuTarget | null>(null)
   const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null)
   const [renameName, setRenameName] = useState('')
@@ -322,17 +323,19 @@ export function App() {
   }, [lastSavedMarkdown, markdown, saveCurrentArticle, selectedPath])
 
   useEffect(() => {
-    if (!openMenu) {
+    if (!openMenu && !isCreateMenuOpen) {
       return
     }
 
     function handleDocumentClick() {
       setOpenMenu(null)
+      setIsCreateMenuOpen(false)
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         setOpenMenu(null)
+        setIsCreateMenuOpen(false)
       }
     }
 
@@ -343,7 +346,7 @@ export function App() {
       window.removeEventListener('click', handleDocumentClick)
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [openMenu])
+  }, [isCreateMenuOpen, openMenu])
 
   useEffect(() => {
     if (!renameTarget) {
@@ -493,6 +496,7 @@ export function App() {
 
   function toggleLibraryCollapsed() {
     setOpenMenu(null)
+    setIsCreateMenuOpen(false)
 
     setIsLibraryCollapsed((currentCollapsed) => {
       const nextCollapsed = !currentCollapsed
@@ -508,6 +512,7 @@ export function App() {
 
   function startCreateDirectory(parentPath: string) {
     setOpenMenu(null)
+    setIsCreateMenuOpen(false)
     expandDirectory(parentPath)
     setCreating({
       type: 'directory',
@@ -519,6 +524,7 @@ export function App() {
 
   function startCreateArticle(directoryPath: string) {
     setOpenMenu(null)
+    setIsCreateMenuOpen(false)
     expandDirectory(directoryPath)
     setCreating({
       type: 'article',
@@ -533,6 +539,7 @@ export function App() {
     nextMenu: MenuTarget,
   ) {
     event.stopPropagation()
+    setIsCreateMenuOpen(false)
     setCreating(null)
     setErrorMessage(null)
     setOpenMenu((currentMenu) =>
@@ -544,6 +551,7 @@ export function App() {
 
   function startRename(target: RenameTarget) {
     setOpenMenu(null)
+    setIsCreateMenuOpen(false)
     setCreating(null)
     setDeleteTarget(null)
     setRenameTarget(target)
@@ -553,6 +561,7 @@ export function App() {
 
   function startDelete(target: DeleteTarget) {
     setOpenMenu(null)
+    setIsCreateMenuOpen(false)
     setCreating(null)
     setRenameTarget(null)
     setRenameName('')
@@ -847,6 +856,45 @@ export function App() {
     )
   }
 
+  function toggleCreateMenu(event: MouseEvent<HTMLButtonElement>) {
+    event.stopPropagation()
+    setOpenMenu(null)
+    setCreating(null)
+    setErrorMessage(null)
+    setIsCreateMenuOpen((currentOpen) => !currentOpen)
+  }
+
+  function renderHeaderCreateMenu() {
+    if (!isCreateMenuOpen) {
+      return null
+    }
+
+    return (
+      <div
+        className="action-menu create-menu"
+        role="menu"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          className="menu-item"
+          role="menuitem"
+          type="button"
+          onClick={() => startCreateArticle('')}
+        >
+          文章
+        </button>
+        <button
+          className="menu-item"
+          role="menuitem"
+          type="button"
+          onClick={() => startCreateDirectory('')}
+        >
+          目录
+        </button>
+      </div>
+    )
+  }
+
   function renderActionMenu(target: RenameTarget, canCreateDirectory = false) {
     if (openMenu?.type !== target.type || openMenu.path !== target.path) {
       return null
@@ -1086,13 +1134,18 @@ export function App() {
                 </svg>
               </button>
               {isLibraryCollapsed ? null : (
-                <button
-                  className="small-button primary"
-                  type="button"
-                  onClick={() => startCreateDirectory('')}
-                >
-                  新目录
-                </button>
+                <div className="create-menu-shell">
+                  <button
+                    aria-expanded={isCreateMenuOpen}
+                    aria-haspopup="menu"
+                    className="small-button primary"
+                    type="button"
+                    onClick={toggleCreateMenu}
+                  >
+                    新建
+                  </button>
+                  {renderHeaderCreateMenu()}
+                </div>
               )}
             </div>
           </div>
@@ -1104,7 +1157,10 @@ export function App() {
           ) : (
             <div className="library-scroll">
               {renderCreateForm(
-                creating?.type === 'directory' && creating.parentPath === '',
+                (creating?.type === 'directory' &&
+                  creating.parentPath === '') ||
+                  (creating?.type === 'article' &&
+                    creating.directoryPath === ''),
               )}
               {tree ? (
                 tree.children.length > 0 ? (
@@ -1112,7 +1168,9 @@ export function App() {
                     {tree.children.map(renderTreeNode)}
                   </ul>
                 ) : (
-                  <div className="library-empty">先创建一个目录</div>
+                  <div className="library-empty">
+                    新建文章或目录
+                  </div>
                 )
               ) : (
                 <div className="library-empty">正在读取文章库</div>
