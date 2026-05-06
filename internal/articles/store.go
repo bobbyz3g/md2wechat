@@ -47,17 +47,18 @@ func ErrorResponse(err error) (int, string, bool) {
 }
 
 type Store struct {
-	root string
+	root       string
+	rootHandle *os.Root
 }
 
 type resolvedDirectory struct {
-	fullPath     string
+	filePath     string
 	relativePath string
 	depth        int
 }
 
 type resolvedArticle struct {
-	fullPath     string
+	filePath     string
 	relativePath string
 }
 
@@ -67,22 +68,36 @@ func New(root string) (*Store, error) {
 		return nil, err
 	}
 
-	return &Store{root: filepath.Clean(absoluteRoot)}, nil
+	cleanRoot := filepath.Clean(absoluteRoot)
+	if err := os.MkdirAll(cleanRoot, 0o755); err != nil {
+		return nil, err
+	}
+
+	rootHandle, err := os.OpenRoot(cleanRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Store{root: cleanRoot, rootHandle: rootHandle}, nil
 }
 
 func (store *Store) Root() string {
 	return store.root
 }
 
+func (store *Store) Close() error {
+	return store.rootHandle.Close()
+}
+
 func (store *Store) EnsureDefaultLibrary() error {
-	defaultDirectory := filepath.Join(store.root, "默认目录")
+	defaultDirectory := "默认目录"
 	defaultArticle := filepath.Join(defaultDirectory, "春日读书笔记.md")
 
-	if err := os.MkdirAll(defaultDirectory, 0o755); err != nil {
+	if err := store.rootHandle.MkdirAll(defaultDirectory, 0o755); err != nil {
 		return err
 	}
 
-	file, err := os.OpenFile(defaultArticle, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	file, err := store.rootHandle.OpenFile(defaultArticle, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if errors.Is(err, fs.ErrExist) {
 		return nil
 	}
@@ -98,10 +113,6 @@ func (store *Store) EnsureDefaultLibrary() error {
 }
 
 func (store *Store) GetArticleTree() (any, error) {
-	if err := os.MkdirAll(store.root, 0o755); err != nil {
-		return nil, err
-	}
-
 	children, err := store.readDirectory("", 0)
 	if err != nil {
 		return nil, err
@@ -125,7 +136,7 @@ func (store *Store) CreateDirectory(parentPath string, rawName any) (any, error)
 		return nil, &storeError{statusCode: http.StatusBadRequest, message: "目录最多只能创建两层"}
 	}
 
-	if err := assertDirectoryExists(parent.fullPath); err != nil {
+	if err := store.assertDirectoryExists(parent.filePath); err != nil {
 		return nil, err
 	}
 
@@ -134,12 +145,8 @@ func (store *Store) CreateDirectory(parentPath string, rawName any) (any, error)
 		return nil, err
 	}
 
-	fullPath := filepath.Join(parent.fullPath, name)
-	if err := store.assertInsideRoot(fullPath); err != nil {
-		return nil, err
-	}
-
-	if err := os.Mkdir(fullPath, 0o755); err != nil {
+	filePath := filepath.Join(parent.filePath, name)
+	if err := store.rootHandle.Mkdir(filePath, 0o755); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return nil, &storeError{statusCode: http.StatusConflict, message: "同名目录已存在"}
 		}
@@ -172,7 +179,7 @@ func (store *Store) CreateArticle(directoryPath string, rawName any, content str
 		return nil, &storeError{statusCode: http.StatusBadRequest, message: "目录层级超过限制"}
 	}
 
-	if err := assertDirectoryExists(directory.fullPath); err != nil {
+	if err := store.assertDirectoryExists(directory.filePath); err != nil {
 		return nil, err
 	}
 
@@ -181,12 +188,8 @@ func (store *Store) CreateArticle(directoryPath string, rawName any, content str
 		return nil, err
 	}
 
-	fullPath := filepath.Join(directory.fullPath, fileName)
-	if err := store.assertInsideRoot(fullPath); err != nil {
-		return nil, err
-	}
-
-	file, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	filePath := filepath.Join(directory.filePath, fileName)
+	file, err := store.rootHandle.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if errors.Is(err, fs.ErrExist) {
 		return nil, &storeError{statusCode: http.StatusConflict, message: "同名文章已存在"}
 	}
@@ -204,7 +207,7 @@ func (store *Store) CreateArticle(directoryPath string, rawName any, content str
 		return nil, err
 	}
 
-	fileStat, err := os.Stat(fullPath)
+	fileStat, err := store.rootHandle.Stat(filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +234,7 @@ func (store *Store) RenameDirectory(directoryPath string, rawName any) (any, err
 		return nil, &storeError{statusCode: http.StatusBadRequest, message: "目录层级超过限制"}
 	}
 
-	if err := assertDirectoryExists(directory.fullPath); err != nil {
+	if err := store.assertDirectoryExists(directory.filePath); err != nil {
 		return nil, err
 	}
 
@@ -240,13 +243,10 @@ func (store *Store) RenameDirectory(directoryPath string, rawName any) (any, err
 		return nil, err
 	}
 
-	parentPath := filepath.Dir(directory.fullPath)
+	parentPath := filepath.Dir(directory.filePath)
 	targetPath := filepath.Join(parentPath, name)
-	if err := store.assertInsideRoot(targetPath); err != nil {
-		return nil, err
-	}
 
-	if filepath.Clean(targetPath) == filepath.Clean(directory.fullPath) {
+	if filepath.Clean(targetPath) == filepath.Clean(directory.filePath) {
 		return map[string]any{
 			"oldPath": directory.relativePath,
 			"path":    directory.relativePath,
@@ -254,11 +254,11 @@ func (store *Store) RenameDirectory(directoryPath string, rawName any) (any, err
 		}, nil
 	}
 
-	if err := assertPathAvailable(targetPath, "同名目录已存在"); err != nil {
+	if err := store.assertPathAvailable(targetPath, "同名目录已存在"); err != nil {
 		return nil, err
 	}
 
-	if err := os.Rename(directory.fullPath, targetPath); err != nil {
+	if err := store.rootHandle.Rename(directory.filePath, targetPath); err != nil {
 		return nil, err
 	}
 
@@ -277,7 +277,7 @@ func (store *Store) RenameArticle(articlePath string, rawName any) (any, error) 
 		return nil, err
 	}
 
-	if err := assertFileExists(article.fullPath); err != nil {
+	if err := store.assertFileExists(article.filePath); err != nil {
 		return nil, err
 	}
 
@@ -286,13 +286,10 @@ func (store *Store) RenameArticle(articlePath string, rawName any) (any, error) 
 		return nil, err
 	}
 
-	targetPath := filepath.Join(filepath.Dir(article.fullPath), fileName)
-	if err := store.assertInsideRoot(targetPath); err != nil {
-		return nil, err
-	}
+	targetPath := filepath.Join(filepath.Dir(article.filePath), fileName)
 
-	if filepath.Clean(targetPath) == filepath.Clean(article.fullPath) {
-		fileStat, err := os.Stat(article.fullPath)
+	if filepath.Clean(targetPath) == filepath.Clean(article.filePath) {
+		fileStat, err := store.rootHandle.Stat(article.filePath)
 		if err != nil {
 			return nil, err
 		}
@@ -305,15 +302,15 @@ func (store *Store) RenameArticle(articlePath string, rawName any) (any, error) 
 		}, nil
 	}
 
-	if err := assertPathAvailable(targetPath, "同名文章已存在"); err != nil {
+	if err := store.assertPathAvailable(targetPath, "同名文章已存在"); err != nil {
 		return nil, err
 	}
 
-	if err := os.Rename(article.fullPath, targetPath); err != nil {
+	if err := store.rootHandle.Rename(article.filePath, targetPath); err != nil {
 		return nil, err
 	}
 
-	fileStat, err := os.Stat(targetPath)
+	fileStat, err := store.rootHandle.Stat(targetPath)
 	if err != nil {
 		return nil, err
 	}
@@ -342,15 +339,15 @@ func (store *Store) DeleteDirectory(directoryPath string) (any, error) {
 		return nil, &storeError{statusCode: http.StatusBadRequest, message: "目录层级超过限制"}
 	}
 
-	if err := assertDirectoryExists(directory.fullPath); err != nil {
+	if err := store.assertDirectoryExists(directory.filePath); err != nil {
 		return nil, err
 	}
 
-	if err := assertDirectoryCanBeDeleted(directory.fullPath); err != nil {
+	if err := store.assertDirectoryCanBeDeleted(directory.filePath); err != nil {
 		return nil, err
 	}
 
-	if err := removeEmptyDirectoryTree(directory.fullPath); err != nil {
+	if err := store.removeEmptyDirectoryTree(directory.filePath); err != nil {
 		return nil, err
 	}
 
@@ -365,11 +362,11 @@ func (store *Store) DeleteArticle(articlePath string) (any, error) {
 		return nil, err
 	}
 
-	if err := assertFileExists(article.fullPath); err != nil {
+	if err := store.assertFileExists(article.filePath); err != nil {
 		return nil, err
 	}
 
-	if err := os.Remove(article.fullPath); err != nil {
+	if err := store.rootHandle.Remove(article.filePath); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, &storeError{statusCode: http.StatusNotFound, message: "文章不存在"}
 		}
@@ -388,11 +385,11 @@ func (store *Store) ReadArticle(articlePath string) (string, error) {
 		return "", err
 	}
 
-	if err := assertFileExists(article.fullPath); err != nil {
+	if err := store.assertFileExists(article.filePath); err != nil {
 		return "", err
 	}
 
-	content, err := os.ReadFile(article.fullPath)
+	content, err := store.rootHandle.ReadFile(article.filePath)
 	if err != nil {
 		return "", err
 	}
@@ -411,15 +408,15 @@ func (store *Store) SaveArticle(articlePath string, rawContent any) (any, error)
 		return nil, err
 	}
 
-	if err := assertFileExists(article.fullPath); err != nil {
+	if err := store.assertFileExists(article.filePath); err != nil {
 		return nil, err
 	}
 
-	if err := os.WriteFile(article.fullPath, []byte(content), 0o644); err != nil {
+	if err := store.rootHandle.WriteFile(article.filePath, []byte(content), 0o644); err != nil {
 		return nil, err
 	}
 
-	fileStat, err := os.Stat(article.fullPath)
+	fileStat, err := store.rootHandle.Stat(article.filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -436,7 +433,7 @@ func (store *Store) readDirectory(relativePath string, depth int) ([]any, error)
 		return nil, err
 	}
 
-	entries, err := os.ReadDir(directory.fullPath)
+	entries, err := store.readDir(directory.filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -499,13 +496,8 @@ func (store *Store) resolveDirectoryPath(relativePath string) (resolvedDirectory
 		return resolvedDirectory{}, err
 	}
 
-	fullPath := filepath.Join(append([]string{store.root}, segments...)...)
-	if err := store.assertInsideRoot(fullPath); err != nil {
-		return resolvedDirectory{}, err
-	}
-
 	return resolvedDirectory{
-		fullPath:     fullPath,
+		filePath:     filePathFromSegments(segments),
 		relativePath: strings.Join(segments, "/"),
 		depth:        len(segments),
 	}, nil
@@ -530,13 +522,8 @@ func (store *Store) resolveArticlePath(relativePath string) (resolvedArticle, er
 		return resolvedArticle{}, &storeError{statusCode: http.StatusBadRequest, message: "目录层级超过限制"}
 	}
 
-	fullPath := filepath.Join(append([]string{store.root}, segments...)...)
-	if err := store.assertInsideRoot(fullPath); err != nil {
-		return resolvedArticle{}, err
-	}
-
 	return resolvedArticle{
-		fullPath:     fullPath,
+		filePath:     filePathFromSegments(segments),
 		relativePath: strings.Join(segments, "/"),
 	}, nil
 }
@@ -606,8 +593,8 @@ func normalizeArticleFileName(rawName any) (string, error) {
 	}
 
 	baseName := name
-	if strings.HasSuffix(baseName, articleExtension) {
-		baseName = strings.TrimSpace(strings.TrimSuffix(baseName, articleExtension))
+	if before, ok := strings.CutSuffix(baseName, articleExtension); ok {
+		baseName = strings.TrimSpace(before)
 	}
 
 	baseName, err = validateName(baseName, "文章名")
@@ -639,8 +626,16 @@ func parentAPIPath(relativePath string) string {
 	return strings.Join(segments[:len(segments)-1], "/")
 }
 
-func assertDirectoryExists(fullPath string) error {
-	fileStat, err := os.Stat(fullPath)
+func filePathFromSegments(segments []string) string {
+	if len(segments) == 0 {
+		return "."
+	}
+
+	return filepath.Join(segments...)
+}
+
+func (store *Store) assertDirectoryExists(filePath string) error {
+	fileStat, err := store.rootHandle.Stat(filePath)
 	if errors.Is(err, fs.ErrNotExist) {
 		return &storeError{statusCode: http.StatusNotFound, message: "目录不存在"}
 	}
@@ -656,8 +651,8 @@ func assertDirectoryExists(fullPath string) error {
 	return nil
 }
 
-func assertFileExists(fullPath string) error {
-	fileStat, err := os.Stat(fullPath)
+func (store *Store) assertFileExists(filePath string) error {
+	fileStat, err := store.rootHandle.Stat(filePath)
 	if errors.Is(err, fs.ErrNotExist) {
 		return &storeError{statusCode: http.StatusNotFound, message: "文章不存在"}
 	}
@@ -673,8 +668,8 @@ func assertFileExists(fullPath string) error {
 	return nil
 }
 
-func assertPathAvailable(fullPath string, message string) error {
-	_, err := os.Stat(fullPath)
+func (store *Store) assertPathAvailable(filePath string, message string) error {
+	_, err := store.rootHandle.Stat(filePath)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -686,17 +681,27 @@ func assertPathAvailable(fullPath string, message string) error {
 	return &storeError{statusCode: http.StatusConflict, message: message}
 }
 
-func assertDirectoryCanBeDeleted(fullPath string) error {
-	entries, err := os.ReadDir(fullPath)
+func (store *Store) readDir(filePath string) ([]os.DirEntry, error) {
+	directory, err := store.rootHandle.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+
+	return directory.ReadDir(-1)
+}
+
+func (store *Store) assertDirectoryCanBeDeleted(filePath string) error {
+	entries, err := store.readDir(filePath)
 	if err != nil {
 		return err
 	}
 
 	for _, entry := range entries {
-		childPath := filepath.Join(fullPath, entry.Name())
+		childPath := filepath.Join(filePath, entry.Name())
 
 		if entry.IsDir() {
-			if err := assertDirectoryCanBeDeleted(childPath); err != nil {
+			if err := store.assertDirectoryCanBeDeleted(childPath); err != nil {
 				return err
 			}
 			continue
@@ -712,17 +717,17 @@ func assertDirectoryCanBeDeleted(fullPath string) error {
 	return nil
 }
 
-func removeEmptyDirectoryTree(fullPath string) error {
-	entries, err := os.ReadDir(fullPath)
+func (store *Store) removeEmptyDirectoryTree(filePath string) error {
+	entries, err := store.readDir(filePath)
 	if err != nil {
 		return err
 	}
 
 	for _, entry := range entries {
-		childPath := filepath.Join(fullPath, entry.Name())
+		childPath := filepath.Join(filePath, entry.Name())
 
 		if entry.IsDir() {
-			if err := removeEmptyDirectoryTree(childPath); err != nil {
+			if err := store.removeEmptyDirectoryTree(childPath); err != nil {
 				return err
 			}
 			continue
@@ -735,7 +740,7 @@ func removeEmptyDirectoryTree(fullPath string) error {
 		return &storeError{statusCode: http.StatusConflict, message: "目录下还有非文章文件"}
 	}
 
-	if err := os.Remove(fullPath); err != nil {
+	if err := store.rootHandle.Remove(filePath); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return &storeError{statusCode: http.StatusNotFound, message: "目录不存在"}
 		}
@@ -745,19 +750,6 @@ func removeEmptyDirectoryTree(fullPath string) error {
 		}
 
 		return err
-	}
-
-	return nil
-}
-
-func (store *Store) assertInsideRoot(fullPath string) error {
-	relativePath, err := filepath.Rel(store.root, filepath.Clean(fullPath))
-	if err != nil {
-		return &storeError{statusCode: http.StatusBadRequest, message: "路径不能超出文章库"}
-	}
-
-	if relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) || filepath.IsAbs(relativePath) {
-		return &storeError{statusCode: http.StatusBadRequest, message: "路径不能超出文章库"}
 	}
 
 	return nil

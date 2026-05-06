@@ -36,6 +36,7 @@ func Run() error {
 	if err != nil {
 		return err
 	}
+	defer store.Close()
 
 	if err := store.EnsureDefaultLibrary(); err != nil {
 		return err
@@ -78,7 +79,7 @@ func parseConfig() (serverConfig, error) {
 
 	flag.StringVar(&config.host, "host", "127.0.0.1", "server host")
 	flag.IntVar(&config.port, "port", 4174, "server port")
-	flag.StringVar(&config.articleRoot, "article-root", "", "article library root")
+	flag.StringVar(&config.articleRoot, "root", "", "article library root")
 	flag.BoolVar(&config.noOpen, "no-open", false, "do not open browser")
 	flag.Parse()
 
@@ -100,41 +101,7 @@ func resolveArticleRoot(flagValue string) (string, error) {
 		return filepath.Abs(envValue)
 	}
 
-	return defaultArticleRoot()
-}
-
-func defaultArticleRoot() (string, error) {
-	switch runtime.GOOS {
-	case "windows":
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			return filepath.Join(appData, "md2wechat", "articles"), nil
-		}
-	case "darwin":
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-
-		return filepath.Join(home, "Library", "Application Support", "md2wechat", "articles"), nil
-	default:
-		if xdgDataHome := os.Getenv("XDG_DATA_HOME"); xdgDataHome != "" {
-			return filepath.Join(xdgDataHome, "md2wechat", "articles"), nil
-		}
-
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-
-		return filepath.Join(home, ".local", "share", "md2wechat", "articles"), nil
-	}
-
-	configDir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-
-	return filepath.Join(configDir, "md2wechat", "articles"), nil
+	return os.Getwd()
 }
 
 func listen(host string, port int) (net.Listener, int, error) {

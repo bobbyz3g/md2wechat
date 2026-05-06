@@ -9,11 +9,10 @@ const childEnv = {
   PATH: `${nodeBinDir}${path.delimiter}${process.env.PATH ?? ''}`,
 }
 const children = [
-  spawn(
-    goCommand,
-    ['run', './cmd/md2wechat', '--no-open', '--article-root', 'articles'],
-    { env: childEnv, stdio: 'inherit' },
-  ),
+  spawn(goCommand, ['run', './cmd/md2wechat', '--no-open'], {
+    env: childEnv,
+    stdio: 'inherit',
+  }),
   spawn(npmCommand, ['--prefix', 'web', 'run', 'dev'], {
     env: childEnv,
     stdio: 'inherit',

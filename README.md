@@ -67,19 +67,19 @@ npm run dev:web
 Go 服务支持以下参数：
 
 ```sh
-go run ./cmd/md2wechat --host 127.0.0.1 --port 4174 --article-root articles --no-open
+go run ./cmd/md2wechat --host 127.0.0.1 --port 4174 --root articles --no-open
 ```
 
 - `--host`：监听地址，默认 `127.0.0.1`。
 - `--port`：监听端口，默认 `4174`；端口被占用时会自动切换到可用端口。
-- `--article-root`：文章库目录；优先级高于环境变量。
+- `--root`：文章库目录；优先级高于环境变量。
 - `--no-open`：启动后不自动打开浏览器。
 
 文章库路径优先级：
 
-1. `--article-root`
+1. `--root`
 2. `MD2WECHAT_ARTICLE_ROOT`
-3. 系统用户数据目录，例如 Windows 下的 `%APPDATA%/md2wechat/articles`
+3. 当前所在路径
 
 构建 Windows 绿色分发包：
 
