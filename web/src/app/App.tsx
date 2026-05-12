@@ -98,6 +98,7 @@ type DeleteResponse = {
 const maxDirectoryDepth = 2
 const lastArticlePathStorageKey = 'md2wechat:lastArticlePath'
 const themeIdStorageKey = 'md2wechat:themeId'
+const libraryCollapsedStorageKey = 'md2wechat:libraryCollapsed'
 const readingUnitsPerMinute = 300
 
 export function App() {
@@ -110,7 +111,9 @@ export function App() {
   const [copyState, setCopyState] = useState<CopyState>('idle')
   const [previewMode, setPreviewMode] = useState<PreviewMode>('desktop')
   const [themeId, setThemeId] = useState<ThemeId>(() => readThemeId())
-  const [isLibraryCollapsed, setIsLibraryCollapsed] = useState(false)
+  const [isLibraryCollapsed, setIsLibraryCollapsed] = useState(() =>
+    readLibraryCollapsed(),
+  )
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [creating, setCreating] = useState<CreateTarget | null>(null)
   const [createName, setCreateName] = useState('')
@@ -515,6 +518,8 @@ export function App() {
 
     setIsLibraryCollapsed((currentCollapsed) => {
       const nextCollapsed = !currentCollapsed
+
+      writeLibraryCollapsed(nextCollapsed)
 
       if (nextCollapsed) {
         setCreating(null)
@@ -1621,6 +1626,33 @@ function clearLastArticlePath() {
 
   try {
     window.localStorage.removeItem(lastArticlePathStorageKey)
+  } catch {
+    return
+  }
+}
+
+function readLibraryCollapsed() {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  try {
+    return window.localStorage.getItem(libraryCollapsedStorageKey) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function writeLibraryCollapsed(isCollapsed: boolean) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(
+      libraryCollapsedStorageKey,
+      String(isCollapsed),
+    )
   } catch {
     return
   }
