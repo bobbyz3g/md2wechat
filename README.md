@@ -4,8 +4,6 @@ md2wechat 是一个面向微信公众号写作的 Markdown 排版工具。
 
 它适合习惯用 Markdown 写文章，但最终需要发布到微信公众号的人。你可以在页面里输入 Markdown，查看接近公众号编辑器的排版效果，再把内容复制到公众号后台。
 
-这个项目关注的是稳定的粘贴结果，而不只是把 Markdown 转成网页。标题、段落、引用、列表和代码块都会按公众号可接受的方式排版，尽量减少粘贴后样式丢失、结构变形、代码块显示不一致这类问题。
-
 当前版本服务本地写作和手动发布流程，目标是让内容作者更快得到一份能直接贴进微信公众号的文章。
 
 ## 架构
@@ -27,7 +25,7 @@ md2wechat
 │  └─ server/                  # /api 路由、JSON 请求响应、错误映射
 ├─ web/                        # React + Vite 前端工程和嵌入式静态资源 handler
 ├─ scripts/dev.mjs             # 同时启动 Go API 和 Vite 的开发脚本
-└─ tools/release/windows/      # Windows 绿色包构建脚本
+└─ tools/release/              # 多平台分发包构建脚本
 ```
 
 当前 API 能力：
@@ -46,20 +44,20 @@ md2wechat
 
 ## 运行
 
-开发环境需要 Node.js 22.14+、npm 10.9+ 和 Go 1.26。安装前端依赖并启动开发服务：
+开发环境需要 Node.js 22.14+、npm 10.9+、Make 和 Go 1.26。前端依赖只安装在 `web/` 目录，根目录的 `Makefile` 负责统一编排 Go 和前端命令。
 
 ```sh
 npm --prefix web install
-npm run dev
+make dev
 ```
 
-`npm run dev` 会同时启动 Go API 服务和 Vite 前端。开发环境的文章库固定为项目内 `articles/`，启动后在浏览器打开终端里显示的 Vite 地址。
+`make dev` 会同时启动 Go API 服务和 Vite 前端。开发环境的文章库固定为项目内 `articles/`，启动后在浏览器打开终端里显示的 Vite 地址。
 
 如果需要分别启动：
 
 ```sh
-npm run dev:api
-npm run dev:web
+make dev-api
+make dev-web
 ```
 
 ## 本地应用
@@ -81,20 +79,27 @@ go run ./cmd/md2wechat --host 127.0.0.1 --port 4174 --root articles --no-open
 2. `MD2WECHAT_ARTICLE_ROOT`
 3. 当前所在路径
 
-构建 Windows 绿色分发包：
+构建 Linux、Windows 和 macOS 分发包：
 
 ```sh
-npm run release:windows
+make release
 ```
 
-该命令会先执行前端构建，再交叉编译 `md2wechat.exe`，最终输出 `release/md2wechat-windows-amd64.zip`。
+该命令会先执行前端构建，再交叉编译 Linux、Windows 和 macOS 的 x86/ARM 产物，最终输出到 `release/`：
+
+- `md2wechat-linux-amd64.tar.gz`
+- `md2wechat-linux-arm64.tar.gz`
+- `md2wechat-windows-amd64.zip`
+- `md2wechat-windows-arm64.zip`
+- `md2wechat-darwin-amd64.tar.gz`
+- `md2wechat-darwin-arm64.tar.gz`
 
 常用验证命令：
 
 ```sh
-go test ./cmd/md2wechat ./internal/... ./web ./tools/release/windows
-go vet ./cmd/md2wechat ./internal/... ./web ./tools/release/windows
-npm run lint
-npm run test
-npm run build
+go test ./cmd/md2wechat ./internal/... ./web ./tools/release
+go vet ./cmd/md2wechat ./internal/... ./web ./tools/release
+make lint
+make test
+make build
 ```
