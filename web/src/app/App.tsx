@@ -56,6 +56,11 @@ type ArticleContentResponse = {
   content: string
 }
 
+type ArticleStatusResponse = {
+  path: string
+  updatedAt: string
+}
+
 type ArticleSaveResponse = {
   path: string
   updatedAt: string
@@ -95,11 +100,22 @@ type DeleteResponse = {
   path: string
 }
 
+type DiskChangeNotice =
+  | {
+      type: 'reloaded'
+    }
+  | {
+      type: 'conflict'
+      updatedAt: string
+    }
+
 const maxDirectoryDepth = 2
 const lastArticlePathStorageKey = 'md2wechat:lastArticlePath'
 const themeIdStorageKey = 'md2wechat:themeId'
 const libraryCollapsedStorageKey = 'md2wechat:libraryCollapsed'
 const readingUnitsPerMinute = 300
+const articleStatusCheckInterval = 2500
+const diskReloadNoticeDuration = 3200
 
 export function App() {
   const [tree, setTree] = useState<ArticleTree | null>(null)
@@ -129,6 +145,8 @@ export function App() {
     null,
   )
   const [isDeleting, setIsDeleting] = useState(false)
+  const [diskChangeNotice, setDiskChangeNotice] =
+    useState<DiskChangeNotice | null>(null)
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(
     () => new Set(),
   )
@@ -136,6 +154,8 @@ export function App() {
   const selectedPathRef = useRef<string | null>(null)
   const markdownRef = useRef('')
   const lastSavedMarkdownRef = useRef('')
+  const lastKnownUpdatedAtRef = useRef<string | null>(null)
+  const saveStateRef = useRef<SaveState>('loading')
   const editorScrollRef = useRef<HTMLTextAreaElement | null>(null)
   const previewScrollRef = useRef<HTMLElement | null>(null)
   const syncScrollLockRef = useRef(false)
@@ -170,6 +190,7 @@ export function App() {
       selectedPathRef.current = articlePath
       markdownRef.current = article.content
       lastSavedMarkdownRef.current = article.content
+      lastKnownUpdatedAtRef.current = articleUpdatedAt ?? null
 
       writeLastArticlePath(articlePath)
       setSelectedPath(articlePath)
@@ -178,6 +199,7 @@ export function App() {
       setLastSavedAt(articleUpdatedAt ?? null)
       setCopyState('idle')
       setErrorMessage(null)
+      setDiskChangeNotice(null)
       setSaveState('saved')
     },
     [],
@@ -227,8 +249,10 @@ export function App() {
           : currentTree,
       )
       setLastSavedAt(result.updatedAt)
+      lastKnownUpdatedAtRef.current = result.updatedAt
       lastSavedMarkdownRef.current = currentMarkdown
       setLastSavedMarkdown(currentMarkdown)
+      setDiskChangeNotice(null)
       setSaveState(
         markdownRef.current === currentMarkdown ? 'saved' : 'dirty',
       )
@@ -317,7 +341,11 @@ export function App() {
   }, [loadArticle])
 
   useEffect(() => {
-    if (!selectedPath || markdown === lastSavedMarkdown) {
+    if (
+      !selectedPath ||
+      markdown === lastSavedMarkdown ||
+      diskChangeNotice?.type === 'conflict'
+    ) {
       return
     }
 
@@ -328,7 +356,108 @@ export function App() {
     return () => {
       window.clearTimeout(timer)
     }
-  }, [lastSavedMarkdown, markdown, saveCurrentArticle, selectedPath])
+  }, [
+    diskChangeNotice,
+    lastSavedMarkdown,
+    markdown,
+    saveCurrentArticle,
+    selectedPath,
+  ])
+
+  useEffect(() => {
+    saveStateRef.current = saveState
+  }, [saveState])
+
+  useEffect(() => {
+    if (!selectedPath) {
+      return
+    }
+
+    let ignore = false
+
+    async function checkArticleStatus() {
+      const articlePath = selectedPathRef.current
+
+      if (!articlePath) {
+        return
+      }
+
+      try {
+        const status = await requestJson<ArticleStatusResponse>(
+          `/api/articles/status?path=${encodeURIComponent(articlePath)}`,
+        )
+
+        if (ignore || selectedPathRef.current !== status.path) {
+          return
+        }
+
+        const knownUpdatedAt = lastKnownUpdatedAtRef.current
+
+        if (!knownUpdatedAt) {
+          lastKnownUpdatedAtRef.current = status.updatedAt
+          setLastSavedAt(status.updatedAt)
+          return
+        }
+
+        if (status.updatedAt === knownUpdatedAt) {
+          return
+        }
+
+        const hasLocalChanges =
+          markdownRef.current !== lastSavedMarkdownRef.current ||
+          saveStateRef.current === 'saving'
+
+        if (hasLocalChanges) {
+          setDiskChangeNotice({
+            type: 'conflict',
+            updatedAt: status.updatedAt,
+          })
+          return
+        }
+
+        await loadArticle(status.path, status.updatedAt)
+
+        if (ignore) {
+          return
+        }
+
+        await refreshTree()
+
+        if (!ignore) {
+          setDiskChangeNotice({ type: 'reloaded' })
+        }
+      } catch (error) {
+        if (!ignore) {
+          setErrorMessage(getErrorMessage(error))
+        }
+      }
+    }
+
+    const timer = window.setInterval(() => {
+      void checkArticleStatus()
+    }, articleStatusCheckInterval)
+
+    return () => {
+      ignore = true
+      window.clearInterval(timer)
+    }
+  }, [loadArticle, refreshTree, selectedPath])
+
+  useEffect(() => {
+    if (diskChangeNotice?.type !== 'reloaded') {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      setDiskChangeNotice((currentNotice) =>
+        currentNotice?.type === 'reloaded' ? null : currentNotice,
+      )
+    }, diskReloadNoticeDuration)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [diskChangeNotice])
 
   useEffect(() => {
     if (!openMenu && !isCreateMenuOpen) {
@@ -457,6 +586,27 @@ export function App() {
     writeThemeId(nextThemeId)
     setThemeId(nextThemeId)
     setCopyState('idle')
+  }
+
+  async function handleReloadChangedArticle(updatedAt: string) {
+    const articlePath = selectedPathRef.current
+
+    if (!articlePath) {
+      return
+    }
+
+    try {
+      await loadArticle(articlePath, updatedAt)
+      await refreshTree()
+      setDiskChangeNotice({ type: 'reloaded' })
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error))
+    }
+  }
+
+  function handleKeepCurrentArticle(updatedAt: string) {
+    lastKnownUpdatedAtRef.current = updatedAt
+    setDiskChangeNotice(null)
   }
 
   async function handleSelectArticle(articlePath: string) {
@@ -638,6 +788,7 @@ export function App() {
 
         syncSelectedPathAfterRename('article', result.oldPath, result.path)
         if (selectedPathRef.current === result.path) {
+          lastKnownUpdatedAtRef.current = result.updatedAt
           setLastSavedAt(result.updatedAt)
         }
       }
@@ -726,6 +877,7 @@ export function App() {
     selectedPathRef.current = null
     markdownRef.current = ''
     lastSavedMarkdownRef.current = ''
+    lastKnownUpdatedAtRef.current = null
 
     clearLastArticlePath()
     setSelectedPath(null)
@@ -733,6 +885,7 @@ export function App() {
     setLastSavedMarkdown('')
     setLastSavedAt(null)
     setCopyState('idle')
+    setDiskChangeNotice(null)
     setSaveState('saved')
   }
 
@@ -1199,13 +1352,47 @@ export function App() {
           )}
         </aside>
 
-        <label className="pane editor-pane">
-          <span className="pane-title editor-title">
+        <section
+          className="pane editor-pane"
+          aria-labelledby="editor-title"
+        >
+          <span className="pane-title editor-title" id="editor-title">
             <span>Markdown</span>
             <span>{currentArticle?.name ?? '未选择文章'}</span>
           </span>
+          {diskChangeNotice?.type === 'reloaded' ? (
+            <div className="disk-reload-notice" role="status">
+              检测到磁盘变更，已重新载入文章
+            </div>
+          ) : null}
+          {diskChangeNotice?.type === 'conflict' ? (
+            <div className="disk-change-banner" role="alert">
+              <span>磁盘文件已变化</span>
+              <div className="disk-change-actions">
+                <button
+                  className="small-button primary"
+                  type="button"
+                  onClick={() =>
+                    void handleReloadChangedArticle(diskChangeNotice.updatedAt)
+                  }
+                >
+                  重新载入
+                </button>
+                <button
+                  className="small-button"
+                  type="button"
+                  onClick={() =>
+                    handleKeepCurrentArticle(diskChangeNotice.updatedAt)
+                  }
+                >
+                  保留当前
+                </button>
+              </div>
+            </div>
+          ) : null}
           <textarea
             ref={editorScrollRef}
+            aria-labelledby="editor-title"
             value={markdown}
             disabled={!selectedPath || saveState === 'loading'}
             onChange={(event) => {
@@ -1215,7 +1402,7 @@ export function App() {
             placeholder="选择左侧文章后开始编辑"
             spellCheck={false}
           />
-        </label>
+        </section>
 
         <section className="pane preview-pane" aria-labelledby="preview-title">
           <div className="pane-title preview-toolbar">

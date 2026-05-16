@@ -360,6 +360,27 @@ func (store *Store) ReadArticle(articlePath string) (string, error) {
 	return string(content), nil
 }
 
+func (store *Store) GetArticleStatus(articlePath string) (any, error) {
+	article, err := store.resolveArticlePath(articlePath)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := store.assertFileExists(article.filePath); err != nil {
+		return nil, err
+	}
+
+	fileStat, err := store.rootHandle.Stat(article.filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"path":      article.relativePath,
+		"updatedAt": formatModifiedTime(fileStat.ModTime()),
+	}, nil
+}
+
 func (store *Store) SaveArticle(articlePath string, rawContent any) (any, error) {
 	content, ok := rawContent.(string)
 	if !ok {

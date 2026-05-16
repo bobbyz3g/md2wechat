@@ -24,6 +24,7 @@ type ArticleStore interface {
 	DeleteDirectory(directoryPath string) (any, error)
 	DeleteArticle(articlePath string) (any, error)
 	ReadArticle(articlePath string) (string, error)
+	GetArticleStatus(articlePath string) (any, error)
 	SaveArticle(articlePath string, rawContent any) (any, error)
 }
 
@@ -101,6 +102,8 @@ func (app *application) handleAPI(response http.ResponseWriter, request *http.Re
 			"path":    articlePath,
 			"content": content,
 		}
+	case request.Method == http.MethodGet && request.URL.Path == "/api/articles/status":
+		payload, err = app.store.GetArticleStatus(request.URL.Query().Get("path"))
 	case request.Method == http.MethodPut && request.URL.Path == "/api/articles/content":
 		payload, err = app.saveArticle(request)
 	default:
