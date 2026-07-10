@@ -18,7 +18,7 @@
 - 只支持单窗口、单文章库；关闭窗口后进程退出，不驻留托盘。
 - 文章库支持任意目录深度，只显示普通 `.md` 文件，不扫描或访问符号链接。
 - Renderer 保持 `nodeIntegration: false`、`contextIsolation: true`、`sandbox: true`，不直接暴露 `ipcRenderer`。
-- 当前 WSL 工作区只验证 Linux/WSLg。Windows 和 macOS 安装包分别在对应宿主系统的原生检出中构建，不引入 Wine、Mono 或交叉打包环境。
+- 实施优先在 Windows 原生检出中完成并验证 Windows 应用。Linux 和 macOS 安装包分别在对应宿主系统的原生检出中构建，不引入 Wine、Mono 或交叉打包环境。
 - 不配置自动更新、应用商店、代码签名、公证或 GitHub Actions 发布流程。
 
 ---
@@ -93,12 +93,14 @@
 
 - [ ] **Step 2: Move the package files and remove only the approved generated directory**
 
-Run from the repository root in WSL:
+Run from the repository root in Windows PowerShell:
 
-```bash
-mv web/package.json package.json
-mv web/package-lock.json package-lock.json
-rm -rf web/node_modules
+```powershell
+Move-Item -LiteralPath 'web\package.json' -Destination 'package.json'
+Move-Item -LiteralPath 'web\package-lock.json' -Destination 'package-lock.json'
+if (Test-Path -LiteralPath 'web\node_modules') {
+  Remove-Item -Recurse -Force -LiteralPath 'web\node_modules'
+}
 ```
 
 Expected: 根目录出现 `package.json` 和 `package-lock.json`，`web/node_modules` 不再影响从根目录解析依赖。
@@ -137,7 +139,7 @@ Keep the existing React, Markdown, lint and test dependencies, and set these fie
     "make": "electron-forge make",
     "typecheck": "tsc -b web/tsconfig.json",
     "lint": "eslint --config web/eslint.config.js .",
-    "test": "TMPDIR=/tmp vitest run --config web/vite.config.ts",
+    "test": "vitest run --config web/vite.config.ts",
     "icons": "node scripts/build-icons.mjs"
   }
 }
