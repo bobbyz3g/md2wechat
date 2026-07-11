@@ -6,7 +6,8 @@ web/coverage/
 web/.vite/
 /release/
 coverage
-.vite
+.vite/
+out/
 .codex
 /articles/
 /md2wechat
