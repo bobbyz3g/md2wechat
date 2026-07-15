@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   type FormEvent,
   type MouseEvent,
   type UIEvent,
@@ -12,34 +13,17 @@ import {
 import { copyWechatHtml } from '../clipboard/copyWechatHtml'
 import { renderMarkdown } from '../core/renderMarkdown'
 import { isThemeId, themeList, type ThemeId } from '../core/themes'
+import { desktopApi } from '../desktop/api'
+import type {
+  ArticleNode,
+  ArticleTree,
+  DirectoryNode,
+  TreeNode,
+} from '../../../electron/shared/types'
 
 type CopyState = 'idle' | 'copied' | 'failed'
 type SaveState = 'loading' | 'saved' | 'dirty' | 'saving' | 'failed'
 type PreviewMode = 'desktop' | 'mobile'
-
-type ArticleNode = {
-  type: 'article'
-  name: string
-  path: string
-  updatedAt: string
-}
-
-type DirectoryNode = {
-  type: 'directory'
-  name: string
-  path: string
-  depth: number
-  children: TreeNode[]
-}
-
-type TreeNode = ArticleNode | DirectoryNode
-
-type ArticleTree = {
-  type: 'root'
-  name: string
-  path: ''
-  children: TreeNode[]
-}
 
 type CreateTarget =
   | {
@@ -50,21 +34,6 @@ type CreateTarget =
       type: 'article'
       directoryPath: string
     }
-
-type ArticleContentResponse = {
-  path: string
-  content: string
-}
-
-type ArticleStatusResponse = {
-  path: string
-  updatedAt: string
-}
-
-type ArticleSaveResponse = {
-  path: string
-  updatedAt: string
-}
 
 type ArticleStats = {
   characterCount: number
@@ -86,20 +55,6 @@ type RenameTarget = {
 
 type DeleteTarget = RenameTarget
 
-type DirectoryRenameResponse = {
-  oldPath: string
-  path: string
-  name: string
-}
-
-type ArticleRenameResponse = DirectoryRenameResponse & {
-  updatedAt: string
-}
-
-type DeleteResponse = {
-  path: string
-}
-
 type DiskChangeNotice =
   | {
       type: 'reloaded'
@@ -109,8 +64,6 @@ type DiskChangeNotice =
       updatedAt: string
     }
 
-const maxDirectoryDepth = 2
-const lastArticlePathStorageKey = 'md2wechat:lastArticlePath'
 const themeIdStorageKey = 'md2wechat:themeId'
 const libraryCollapsedStorageKey = 'md2wechat:libraryCollapsed'
 const readingUnitsPerMinute = 300
@@ -118,6 +71,10 @@ const articleStatusCheckInterval = 2500
 const diskReloadNoticeDuration = 3200
 
 export function App() {
+  const [rootPath, setRootPath] = useState<string | null>(null)
+  const [recentRoots, setRecentRoots] = useState<string[]>([])
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null)
+  const [isBootstrapping, setIsBootstrapping] = useState(true)
   const [tree, setTree] = useState<ArticleTree | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [markdown, setMarkdown] = useState('')
@@ -152,6 +109,7 @@ export function App() {
   )
 
   const selectedPathRef = useRef<string | null>(null)
+  const rootPathRef = useRef<string | null>(null)
   const markdownRef = useRef('')
   const lastSavedMarkdownRef = useRef('')
   const lastKnownUpdatedAtRef = useRef<string | null>(null)
@@ -183,16 +141,17 @@ export function App() {
   const loadArticle = useCallback(
     async (articlePath: string, articleUpdatedAt?: string) => {
       setSaveState('loading')
-      const article = await requestJson<ArticleContentResponse>(
-        `/api/articles/content?path=${encodeURIComponent(articlePath)}`,
-      )
+      const article = await desktopApi.articles.read(articlePath)
 
       selectedPathRef.current = articlePath
       markdownRef.current = article.content
       lastSavedMarkdownRef.current = article.content
       lastKnownUpdatedAtRef.current = articleUpdatedAt ?? null
 
-      writeLastArticlePath(articlePath)
+      const activeRootPath = rootPathRef.current
+      if (activeRootPath) {
+        writeLastArticlePath(activeRootPath, articlePath)
+      }
       setSelectedPath(articlePath)
       setMarkdown(article.content)
       setLastSavedMarkdown(article.content)
@@ -206,7 +165,7 @@ export function App() {
   )
 
   const refreshTree = useCallback(async () => {
-    const nextTree = await requestJson<ArticleTree>('/api/articles/tree')
+    const nextTree = await desktopApi.library.getTree()
 
     setTree(nextTree)
     return nextTree
@@ -228,15 +187,9 @@ export function App() {
     setSaveState('saving')
 
     try {
-      const result = await requestJson<ArticleSaveResponse>(
-        '/api/articles/content',
-        {
-          method: 'PUT',
-          body: JSON.stringify({
-            path: articlePath,
-            content: currentMarkdown,
-          }),
-        },
+      const result = await desktopApi.articles.save(
+        articlePath,
+        currentMarkdown,
       )
 
       setTree((currentTree) =>
@@ -301,17 +254,23 @@ export function App() {
 
     async function boot() {
       try {
-        const nextTree = await requestJson<ArticleTree>('/api/articles/tree')
+        const bootstrapState = await desktopApi.app.getBootstrapState()
 
         if (ignore) {
           return
         }
 
-        setTree(nextTree)
+        rootPathRef.current = bootstrapState.rootPath
+        setRootPath(bootstrapState.rootPath)
+        setRecentRoots(bootstrapState.recentRoots)
+        setBootstrapError(bootstrapState.error?.message ?? null)
+        setTree(bootstrapState.tree)
 
-        const lastArticlePath = readLastArticlePath()
-        const lastArticle = lastArticlePath
-          ? findArticle(nextTree, lastArticlePath)
+        const lastArticlePath = bootstrapState.rootPath
+          ? readLastArticlePath(bootstrapState.rootPath)
+          : null
+        const lastArticle = lastArticlePath && bootstrapState.tree
+          ? findArticle(bootstrapState.tree, lastArticlePath)
           : null
 
         if (lastArticle) {
@@ -320,7 +279,9 @@ export function App() {
           )
           await loadArticle(lastArticle.path, lastArticle.updatedAt)
         } else {
-          clearLastArticlePath()
+          if (bootstrapState.rootPath) {
+            clearLastArticlePath(bootstrapState.rootPath)
+          }
           setExpandedDirectories(new Set())
           setLastSavedAt(null)
           setSaveState('saved')
@@ -328,7 +289,11 @@ export function App() {
       } catch (error) {
         if (!ignore) {
           setSaveState('failed')
-          setErrorMessage(getErrorMessage(error))
+          setBootstrapError(getErrorMessage(error))
+        }
+      } finally {
+        if (!ignore) {
+          setIsBootstrapping(false)
         }
       }
     }
@@ -383,9 +348,7 @@ export function App() {
       }
 
       try {
-        const status = await requestJson<ArticleStatusResponse>(
-          `/api/articles/status?path=${encodeURIComponent(articlePath)}`,
-        )
+        const status = await desktopApi.articles.getStatus(articlePath)
 
         if (ignore || selectedPathRef.current !== status.path) {
           return
@@ -764,27 +727,15 @@ export function App() {
       }
 
       if (renameTarget.type === 'directory') {
-        const result = await requestJson<DirectoryRenameResponse>(
-          '/api/articles/directories',
-          {
-            method: 'PATCH',
-            body: JSON.stringify({
-              path: renameTarget.path,
-              name,
-            }),
-          },
+        const result = await desktopApi.directories.rename(
+          renameTarget.path,
+          name,
         )
 
         syncSelectedPathAfterRename('directory', result.oldPath, result.path)
         syncExpandedDirectoriesAfterDirectoryRename(result.oldPath, result.path)
       } else {
-        const result = await requestJson<ArticleRenameResponse>('/api/articles', {
-          method: 'PATCH',
-          body: JSON.stringify({
-            path: renameTarget.path,
-            name,
-          }),
-        })
+        const result = await desktopApi.articles.rename(renameTarget.path, name)
 
         syncSelectedPathAfterRename('article', result.oldPath, result.path)
         if (selectedPathRef.current === result.path) {
@@ -816,7 +767,10 @@ export function App() {
 
     if (targetType === 'article' && currentPath === oldPath) {
       selectedPathRef.current = nextPath
-      writeLastArticlePath(nextPath)
+      const activeRootPath = rootPathRef.current
+      if (activeRootPath) {
+        writeLastArticlePath(activeRootPath, nextPath)
+      }
       setSelectedPath(nextPath)
       return
     }
@@ -828,7 +782,10 @@ export function App() {
       const renamedPath = `${nextPath}${currentPath.slice(oldPath.length)}`
 
       selectedPathRef.current = renamedPath
-      writeLastArticlePath(renamedPath)
+      const activeRootPath = rootPathRef.current
+      if (activeRootPath) {
+        writeLastArticlePath(activeRootPath, renamedPath)
+      }
       setSelectedPath(renamedPath)
     }
   }
@@ -879,7 +836,10 @@ export function App() {
     lastSavedMarkdownRef.current = ''
     lastKnownUpdatedAtRef.current = null
 
-    clearLastArticlePath()
+    const activeRootPath = rootPathRef.current
+    if (activeRootPath) {
+      clearLastArticlePath(activeRootPath)
+    }
     setSelectedPath(null)
     setMarkdown('')
     setLastSavedMarkdown('')
@@ -904,21 +864,10 @@ export function App() {
         return
       }
 
-      const pathParameter = encodeURIComponent(deleteTarget.path)
       const result =
         deleteTarget.type === 'directory'
-          ? await requestJson<DeleteResponse>(
-              `/api/articles/directories?path=${pathParameter}`,
-              {
-                method: 'DELETE',
-              },
-            )
-          : await requestJson<DeleteResponse>(
-              `/api/articles?path=${pathParameter}`,
-              {
-                method: 'DELETE',
-              },
-            )
+          ? await desktopApi.directories.delete(deleteTarget.path)
+          : await desktopApi.articles.delete(deleteTarget.path)
 
       const currentPath = selectedPathRef.current
 
@@ -963,13 +912,7 @@ export function App() {
     try {
       if (creating.type === 'directory') {
         expandDirectory(creating.parentPath)
-        await requestJson('/api/articles/directories', {
-          method: 'POST',
-          body: JSON.stringify({
-            parentPath: creating.parentPath,
-            name,
-          }),
-        })
+        await desktopApi.directories.create(creating.parentPath, name)
         await refreshTree()
       } else {
         const saved = await saveCurrentArticle()
@@ -979,13 +922,11 @@ export function App() {
         }
 
         expandDirectory(creating.directoryPath)
-        const article = await requestJson<ArticleNode>('/api/articles', {
-          method: 'POST',
-          body: JSON.stringify({
-            directoryPath: creating.directoryPath,
-            name,
-          }),
-        })
+        const article = await desktopApi.articles.create(
+          creating.directoryPath,
+          name,
+          `# ${name}\n\n`,
+        )
 
         await refreshTree()
         await loadArticle(article.path, article.updatedAt)
@@ -1068,7 +1009,7 @@ export function App() {
     )
   }
 
-  function renderActionMenu(target: RenameTarget, canCreateDirectory = false) {
+  function renderActionMenu(target: RenameTarget) {
     if (openMenu?.type !== target.type || openMenu.path !== target.path) {
       return null
     }
@@ -1093,7 +1034,6 @@ export function App() {
               className="menu-item"
               role="menuitem"
               type="button"
-              disabled={!canCreateDirectory}
               onClick={() => startCreateDirectory(target.path)}
             >
               新目录
@@ -1169,13 +1109,16 @@ export function App() {
       )
     }
 
-    const canCreateDirectory = node.depth < maxDirectoryDepth
     const isExpanded = expandedDirectories.has(node.path)
     const isMenuOpen =
       openMenu?.type === 'directory' && openMenu.path === node.path
 
     return (
-      <li className={`tree-item depth-${node.depth}`} key={node.path}>
+      <li
+        className="tree-item"
+        key={node.path}
+        style={{ '--tree-depth': node.depth } as CSSProperties}
+      >
         <div className="directory-row">
           <button
             aria-expanded={isExpanded}
@@ -1205,14 +1148,11 @@ export function App() {
             >
               ⋯
             </button>
-            {renderActionMenu(
-              {
-                type: 'directory',
-                path: node.path,
-                name: node.name,
-              },
-              canCreateDirectory,
-            )}
+            {renderActionMenu({
+              type: 'directory',
+              path: node.path,
+              name: node.name,
+            })}
           </div>
         </div>
         {isExpanded ? (
@@ -1233,6 +1173,21 @@ export function App() {
           </>
         ) : null}
       </li>
+    )
+  }
+
+  if (isBootstrapping || !rootPath) {
+    return (
+      <main
+        className="app-shell"
+        data-recent-root-count={recentRoots.length}
+      >
+        <div className="library-empty" role="status">
+          {isBootstrapping
+            ? '正在启动桌面应用'
+            : (bootstrapError ?? '请选择文章库')}
+        </div>
+      </main>
     )
   }
 
@@ -1620,34 +1575,6 @@ export function App() {
   )
 }
 
-async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
-  })
-
-  if (!response.ok) {
-    let message = '请求失败'
-
-    try {
-      const body = (await response.json()) as { message?: string }
-
-      if (body.message) {
-        message = body.message
-      }
-    } catch {
-      message = response.statusText || message
-    }
-
-    throw new Error(message)
-  }
-
-  return response.json() as Promise<T>
-}
-
 function getSaveStateText(saveState: SaveState) {
   switch (saveState) {
     case 'loading':
@@ -1782,37 +1709,44 @@ function updateArticleChildrenUpdatedAt(
   return [nextChildren, changed]
 }
 
-function readLastArticlePath() {
+function getLastArticleStorageKey(rootPath: string) {
+  return `md2wechat:lastArticlePath:${encodeURIComponent(rootPath)}`
+}
+
+function readLastArticlePath(rootPath: string) {
   if (typeof window === 'undefined') {
     return null
   }
 
   try {
-    return window.localStorage.getItem(lastArticlePathStorageKey)
+    return window.localStorage.getItem(getLastArticleStorageKey(rootPath))
   } catch {
     return null
   }
 }
 
-function writeLastArticlePath(articlePath: string) {
+function writeLastArticlePath(rootPath: string, articlePath: string) {
   if (typeof window === 'undefined') {
     return
   }
 
   try {
-    window.localStorage.setItem(lastArticlePathStorageKey, articlePath)
+    window.localStorage.setItem(
+      getLastArticleStorageKey(rootPath),
+      articlePath,
+    )
   } catch {
     return
   }
 }
 
-function clearLastArticlePath() {
+function clearLastArticlePath(rootPath: string) {
   if (typeof window === 'undefined') {
     return
   }
 
   try {
-    window.localStorage.removeItem(lastArticlePathStorageKey)
+    window.localStorage.removeItem(getLastArticleStorageKey(rootPath))
   } catch {
     return
   }

@@ -405,6 +405,7 @@ textarea:focus-visible {
 .tree-item {
   display: grid;
   gap: 3px;
+  padding-inline-start: calc(var(--tree-depth, 0) * 0.75rem);
 }
 
 .directory-row,
@@ -591,10 +592,6 @@ textarea:focus-visible {
   color: var(--color-text-muted);
   font-size: 12px;
   font-weight: 600;
-}
-
-.depth-2 {
-  margin-left: 0;
 }
 
 .create-form {
