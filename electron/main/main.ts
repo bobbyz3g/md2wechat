@@ -1,5 +1,5 @@
 import { app, BrowserWindow } from 'electron'
-import { createRequire } from 'node:module'
+import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -12,8 +12,42 @@ let mainWindow: BrowserWindow | null = null
 let removeIpcHandlers: (() => void) | null = null
 let allowClose = false
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url))
-const require = createRequire(import.meta.url)
-const isSquirrelStartup = require('electron-squirrel-startup') as boolean
+const isSquirrelStartup = handleSquirrelStartup()
+
+function handleSquirrelStartup() {
+  if (process.platform !== 'win32') {
+    return false
+  }
+
+  const squirrelCommand = process.argv[1]
+  if (squirrelCommand === '--squirrel-obsolete') {
+    app.quit()
+    return true
+  }
+
+  const shortcutArgument =
+    squirrelCommand === '--squirrel-install' ||
+    squirrelCommand === '--squirrel-updated'
+      ? `--createShortcut=${path.basename(process.execPath)}`
+      : squirrelCommand === '--squirrel-uninstall'
+        ? `--removeShortcut=${path.basename(process.execPath)}`
+        : null
+
+  if (!shortcutArgument) {
+    return false
+  }
+
+  const updateExecutable = path.resolve(
+    path.dirname(process.execPath),
+    '..',
+    'Update.exe',
+  )
+  spawn(updateExecutable, [shortcutArgument], { detached: true }).on(
+    'close',
+    () => app.quit(),
+  )
+  return true
+}
 
 async function createWindow(configStore: ConfigStore) {
   mainWindow = new BrowserWindow({
