@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   type FormEvent,
   type MouseEvent,
   type UIEvent,
@@ -12,34 +13,19 @@ import {
 import { copyWechatHtml } from '../clipboard/copyWechatHtml'
 import { renderMarkdown } from '../core/renderMarkdown'
 import { isThemeId, themeList, type ThemeId } from '../core/themes'
+import { desktopApi } from '../desktop/api'
+import { WelcomeScreen } from './WelcomeScreen'
+import type {
+  ArticleNode,
+  ArticleTree,
+  DirectoryNode,
+  LibraryOpenResult,
+  TreeNode,
+} from '../../../electron/shared/types'
 
 type CopyState = 'idle' | 'copied' | 'failed'
 type SaveState = 'loading' | 'saved' | 'dirty' | 'saving' | 'failed'
 type PreviewMode = 'desktop' | 'mobile'
-
-type ArticleNode = {
-  type: 'article'
-  name: string
-  path: string
-  updatedAt: string
-}
-
-type DirectoryNode = {
-  type: 'directory'
-  name: string
-  path: string
-  depth: number
-  children: TreeNode[]
-}
-
-type TreeNode = ArticleNode | DirectoryNode
-
-type ArticleTree = {
-  type: 'root'
-  name: string
-  path: ''
-  children: TreeNode[]
-}
 
 type CreateTarget =
   | {
@@ -50,21 +36,6 @@ type CreateTarget =
       type: 'article'
       directoryPath: string
     }
-
-type ArticleContentResponse = {
-  path: string
-  content: string
-}
-
-type ArticleStatusResponse = {
-  path: string
-  updatedAt: string
-}
-
-type ArticleSaveResponse = {
-  path: string
-  updatedAt: string
-}
 
 type ArticleStats = {
   characterCount: number
@@ -86,20 +57,6 @@ type RenameTarget = {
 
 type DeleteTarget = RenameTarget
 
-type DirectoryRenameResponse = {
-  oldPath: string
-  path: string
-  name: string
-}
-
-type ArticleRenameResponse = DirectoryRenameResponse & {
-  updatedAt: string
-}
-
-type DeleteResponse = {
-  path: string
-}
-
 type DiskChangeNotice =
   | {
       type: 'reloaded'
@@ -109,8 +66,6 @@ type DiskChangeNotice =
       updatedAt: string
     }
 
-const maxDirectoryDepth = 2
-const lastArticlePathStorageKey = 'md2wechat:lastArticlePath'
 const themeIdStorageKey = 'md2wechat:themeId'
 const libraryCollapsedStorageKey = 'md2wechat:libraryCollapsed'
 const readingUnitsPerMinute = 300
@@ -118,6 +73,13 @@ const articleStatusCheckInterval = 2500
 const diskReloadNoticeDuration = 3200
 
 export function App() {
+  const [rootPath, setRootPath] = useState<string | null>(null)
+  const [recentRoots, setRecentRoots] = useState<string[]>([])
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null)
+  const [isBootstrapping, setIsBootstrapping] = useState(true)
+  const [isOpeningLibrary, setIsOpeningLibrary] = useState(false)
+  const [isCloseDecisionOpen, setIsCloseDecisionOpen] = useState(false)
+  const [isResolvingClose, setIsResolvingClose] = useState(false)
   const [tree, setTree] = useState<ArticleTree | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [markdown, setMarkdown] = useState('')
@@ -152,6 +114,7 @@ export function App() {
   )
 
   const selectedPathRef = useRef<string | null>(null)
+  const rootPathRef = useRef<string | null>(null)
   const markdownRef = useRef('')
   const lastSavedMarkdownRef = useRef('')
   const lastKnownUpdatedAtRef = useRef<string | null>(null)
@@ -159,6 +122,9 @@ export function App() {
   const editorScrollRef = useRef<HTMLTextAreaElement | null>(null)
   const previewScrollRef = useRef<HTMLElement | null>(null)
   const syncScrollLockRef = useRef(false)
+  const isOpeningLibraryRef = useRef(false)
+  const isCloseSaveInProgressRef = useRef(false)
+  const isCloseDecisionPendingRef = useRef(false)
 
   const rendered = useMemo(
     () => renderMarkdown(markdown, { themeId }),
@@ -183,16 +149,17 @@ export function App() {
   const loadArticle = useCallback(
     async (articlePath: string, articleUpdatedAt?: string) => {
       setSaveState('loading')
-      const article = await requestJson<ArticleContentResponse>(
-        `/api/articles/content?path=${encodeURIComponent(articlePath)}`,
-      )
+      const article = await desktopApi.articles.read(articlePath)
 
       selectedPathRef.current = articlePath
       markdownRef.current = article.content
       lastSavedMarkdownRef.current = article.content
       lastKnownUpdatedAtRef.current = articleUpdatedAt ?? null
 
-      writeLastArticlePath(articlePath)
+      const activeRootPath = rootPathRef.current
+      if (activeRootPath) {
+        writeLastArticlePath(activeRootPath, articlePath)
+      }
       setSelectedPath(articlePath)
       setMarkdown(article.content)
       setLastSavedMarkdown(article.content)
@@ -206,7 +173,7 @@ export function App() {
   )
 
   const refreshTree = useCallback(async () => {
-    const nextTree = await requestJson<ArticleTree>('/api/articles/tree')
+    const nextTree = await desktopApi.library.getTree()
 
     setTree(nextTree)
     return nextTree
@@ -228,15 +195,9 @@ export function App() {
     setSaveState('saving')
 
     try {
-      const result = await requestJson<ArticleSaveResponse>(
-        '/api/articles/content',
-        {
-          method: 'PUT',
-          body: JSON.stringify({
-            path: articlePath,
-            content: currentMarkdown,
-          }),
-        },
+      const result = await desktopApi.articles.save(
+        articlePath,
+        currentMarkdown,
       )
 
       setTree((currentTree) =>
@@ -264,6 +225,129 @@ export function App() {
       return false
     }
   }, [])
+
+  const resetCurrentArticleState = useCallback(() => {
+    selectedPathRef.current = null
+    markdownRef.current = ''
+    lastSavedMarkdownRef.current = ''
+    lastKnownUpdatedAtRef.current = null
+
+    setSelectedPath(null)
+    setMarkdown('')
+    setLastSavedMarkdown('')
+    setLastSavedAt(null)
+    setCopyState('idle')
+    setDiskChangeNotice(null)
+    setSaveState('saved')
+  }, [])
+
+  const clearCurrentArticle = useCallback(() => {
+    const activeRootPath = rootPathRef.current
+    if (activeRootPath) {
+      clearLastArticlePath(activeRootPath)
+    }
+    resetCurrentArticleState()
+  }, [resetCurrentArticleState])
+
+  const activateLibrary = useCallback(
+    async (openedLibrary: LibraryOpenResult) => {
+      rootPathRef.current = openedLibrary.rootPath
+      resetCurrentArticleState()
+      setRootPath(openedLibrary.rootPath)
+      setRecentRoots(openedLibrary.recentRoots)
+      setBootstrapError(null)
+      setTree(openedLibrary.tree)
+      setExpandedDirectories(new Set())
+      setCreating(null)
+      setCreateName('')
+      setOpenMenu(null)
+      setIsCreateMenuOpen(false)
+      setRenameTarget(null)
+      setRenameName('')
+      setDeleteTarget(null)
+      setDeleteErrorMessage(null)
+      setErrorMessage(null)
+
+      const lastArticlePath = readLastArticlePath(openedLibrary.rootPath)
+      const lastArticle = lastArticlePath
+        ? findArticle(openedLibrary.tree, lastArticlePath)
+        : null
+
+      if (!lastArticle) {
+        clearLastArticlePath(openedLibrary.rootPath)
+        return
+      }
+
+      setExpandedDirectories(
+        new Set(getParentDirectoryPaths(lastArticle.path)),
+      )
+      await loadArticle(lastArticle.path, lastArticle.updatedAt)
+    },
+    [loadArticle, resetCurrentArticleState],
+  )
+
+  const openLibrary = useCallback(
+    async (
+      request:
+        | { type: 'choose' }
+        | { type: 'recent'; rootPath: string },
+    ) => {
+      if (isOpeningLibraryRef.current) {
+        return
+      }
+
+      isOpeningLibraryRef.current = true
+      setIsOpeningLibrary(true)
+
+      try {
+        const saved = await saveCurrentArticle()
+        if (!saved) {
+          return
+        }
+
+        const openedLibrary =
+          request.type === 'choose'
+            ? await desktopApi.library.choose()
+            : await desktopApi.library.open(request.rootPath)
+
+        if (!openedLibrary) {
+          return
+        }
+
+        await activateLibrary(openedLibrary)
+      } catch (error) {
+        const message = getErrorMessage(error)
+        if (request.type === 'recent') {
+          setRecentRoots((currentRoots) =>
+            currentRoots.filter((rootPath) => rootPath !== request.rootPath),
+          )
+        }
+        if (rootPathRef.current) {
+          setErrorMessage(message)
+        } else {
+          setBootstrapError(message)
+        }
+      } finally {
+        isOpeningLibraryRef.current = false
+        setIsOpeningLibrary(false)
+      }
+    },
+    [activateLibrary, saveCurrentArticle],
+  )
+
+  const refreshAfterMissingArticle = useCallback(
+    async (articlePath: string) => {
+      const nextTree = await refreshTree()
+      if (
+        selectedPathRef.current === articlePath &&
+        !findArticle(nextTree, articlePath)
+      ) {
+        clearCurrentArticle()
+      }
+      setErrorMessage('文章不存在')
+    },
+    [clearCurrentArticle, refreshTree],
+  )
 
   const resetPaneScrollPositions = useCallback(() => {
     syncScrollLockRef.current = false
@@ -301,17 +385,23 @@ export function App() {
 
     async function boot() {
       try {
-        const nextTree = await requestJson<ArticleTree>('/api/articles/tree')
+        const bootstrapState = await desktopApi.app.getBootstrapState()
 
         if (ignore) {
           return
         }
 
-        setTree(nextTree)
+        rootPathRef.current = bootstrapState.rootPath
+        setRootPath(bootstrapState.rootPath)
+        setRecentRoots(bootstrapState.recentRoots)
+        setBootstrapError(bootstrapState.error?.message ?? null)
+        setTree(bootstrapState.tree)
 
-        const lastArticlePath = readLastArticlePath()
-        const lastArticle = lastArticlePath
-          ? findArticle(nextTree, lastArticlePath)
+        const lastArticlePath = bootstrapState.rootPath
+          ? readLastArticlePath(bootstrapState.rootPath)
+          : null
+        const lastArticle = lastArticlePath && bootstrapState.tree
+          ? findArticle(bootstrapState.tree, lastArticlePath)
           : null
 
         if (lastArticle) {
@@ -320,7 +410,9 @@ export function App() {
           )
           await loadArticle(lastArticle.path, lastArticle.updatedAt)
         } else {
-          clearLastArticlePath()
+          if (bootstrapState.rootPath) {
+            clearLastArticlePath(bootstrapState.rootPath)
+          }
           setExpandedDirectories(new Set())
           setLastSavedAt(null)
           setSaveState('saved')
@@ -328,7 +420,11 @@ export function App() {
       } catch (error) {
         if (!ignore) {
           setSaveState('failed')
-          setErrorMessage(getErrorMessage(error))
+          setBootstrapError(getErrorMessage(error))
+        }
+      } finally {
+        if (!ignore) {
+          setIsBootstrapping(false)
         }
       }
     }
@@ -339,6 +435,50 @@ export function App() {
       ignore = true
     }
   }, [loadArticle])
+
+  useEffect(
+    () =>
+      desktopApi.app.onOpenLibraryRequested((requestedRootPath) => {
+        void openLibrary(
+          requestedRootPath
+            ? { type: 'recent', rootPath: requestedRootPath }
+            : { type: 'choose' },
+        )
+      }),
+    [openLibrary],
+  )
+
+  useEffect(
+    () =>
+      desktopApi.app.onBeforeClose(() => {
+        if (
+          isCloseSaveInProgressRef.current ||
+          isCloseDecisionPendingRef.current
+        ) {
+          return
+        }
+
+        isCloseSaveInProgressRef.current = true
+
+        void saveCurrentArticle()
+          .then(async (saved) => {
+            if (saved) {
+              await desktopApi.app.resolveClose('saved')
+              return
+            }
+
+            isCloseDecisionPendingRef.current = true
+            setIsCloseDecisionOpen(true)
+          })
+          .catch((error: unknown) => {
+            setErrorMessage(getErrorMessage(error))
+          })
+          .finally(() => {
+            isCloseSaveInProgressRef.current = false
+          })
+      }),
+    [saveCurrentArticle],
+  )
 
   useEffect(() => {
     if (
@@ -383,9 +523,7 @@ export function App() {
       }
 
       try {
-        const status = await requestJson<ArticleStatusResponse>(
-          `/api/articles/status?path=${encodeURIComponent(articlePath)}`,
-        )
+        const status = await desktopApi.articles.getStatus(articlePath)
 
         if (ignore || selectedPathRef.current !== status.path) {
           return
@@ -428,7 +566,12 @@ export function App() {
         }
       } catch (error) {
         if (!ignore) {
-          setErrorMessage(getErrorMessage(error))
+          const message = getErrorMessage(error)
+          if (message === '文章不存在') {
+            await refreshAfterMissingArticle(articlePath)
+          } else {
+            setErrorMessage(message)
+          }
         }
       }
     }
@@ -441,7 +584,12 @@ export function App() {
       ignore = true
       window.clearInterval(timer)
     }
-  }, [loadArticle, refreshTree, selectedPath])
+  }, [
+    loadArticle,
+    refreshAfterMissingArticle,
+    refreshTree,
+    selectedPath,
+  ])
 
   useEffect(() => {
     if (diskChangeNotice?.type !== 'reloaded') {
@@ -600,7 +748,12 @@ export function App() {
       await refreshTree()
       setDiskChangeNotice({ type: 'reloaded' })
     } catch (error) {
-      setErrorMessage(getErrorMessage(error))
+      const message = getErrorMessage(error)
+      if (message === '文章不存在') {
+        await refreshAfterMissingArticle(articlePath)
+      } else {
+        setErrorMessage(message)
+      }
     }
   }
 
@@ -629,7 +782,12 @@ export function App() {
       await loadArticle(articlePath, article?.updatedAt)
     } catch (error) {
       setSaveState('failed')
-      setErrorMessage(getErrorMessage(error))
+      const message = getErrorMessage(error)
+      if (message === '文章不存在') {
+        await refreshAfterMissingArticle(articlePath)
+      } else {
+        setErrorMessage(message)
+      }
     } finally {
       setSwitchingPath(null)
     }
@@ -764,27 +922,15 @@ export function App() {
       }
 
       if (renameTarget.type === 'directory') {
-        const result = await requestJson<DirectoryRenameResponse>(
-          '/api/articles/directories',
-          {
-            method: 'PATCH',
-            body: JSON.stringify({
-              path: renameTarget.path,
-              name,
-            }),
-          },
+        const result = await desktopApi.directories.rename(
+          renameTarget.path,
+          name,
         )
 
         syncSelectedPathAfterRename('directory', result.oldPath, result.path)
         syncExpandedDirectoriesAfterDirectoryRename(result.oldPath, result.path)
       } else {
-        const result = await requestJson<ArticleRenameResponse>('/api/articles', {
-          method: 'PATCH',
-          body: JSON.stringify({
-            path: renameTarget.path,
-            name,
-          }),
-        })
+        const result = await desktopApi.articles.rename(renameTarget.path, name)
 
         syncSelectedPathAfterRename('article', result.oldPath, result.path)
         if (selectedPathRef.current === result.path) {
@@ -816,7 +962,10 @@ export function App() {
 
     if (targetType === 'article' && currentPath === oldPath) {
       selectedPathRef.current = nextPath
-      writeLastArticlePath(nextPath)
+      const activeRootPath = rootPathRef.current
+      if (activeRootPath) {
+        writeLastArticlePath(activeRootPath, nextPath)
+      }
       setSelectedPath(nextPath)
       return
     }
@@ -828,7 +977,10 @@ export function App() {
       const renamedPath = `${nextPath}${currentPath.slice(oldPath.length)}`
 
       selectedPathRef.current = renamedPath
-      writeLastArticlePath(renamedPath)
+      const activeRootPath = rootPathRef.current
+      if (activeRootPath) {
+        writeLastArticlePath(activeRootPath, renamedPath)
+      }
       setSelectedPath(renamedPath)
     }
   }
@@ -873,22 +1025,6 @@ export function App() {
     })
   }
 
-  function clearCurrentArticle() {
-    selectedPathRef.current = null
-    markdownRef.current = ''
-    lastSavedMarkdownRef.current = ''
-    lastKnownUpdatedAtRef.current = null
-
-    clearLastArticlePath()
-    setSelectedPath(null)
-    setMarkdown('')
-    setLastSavedMarkdown('')
-    setLastSavedAt(null)
-    setCopyState('idle')
-    setDiskChangeNotice(null)
-    setSaveState('saved')
-  }
-
   async function handleDelete() {
     if (!deleteTarget || isDeleting) {
       return
@@ -904,21 +1040,10 @@ export function App() {
         return
       }
 
-      const pathParameter = encodeURIComponent(deleteTarget.path)
       const result =
         deleteTarget.type === 'directory'
-          ? await requestJson<DeleteResponse>(
-              `/api/articles/directories?path=${pathParameter}`,
-              {
-                method: 'DELETE',
-              },
-            )
-          : await requestJson<DeleteResponse>(
-              `/api/articles?path=${pathParameter}`,
-              {
-                method: 'DELETE',
-              },
-            )
+          ? await desktopApi.directories.delete(deleteTarget.path)
+          : await desktopApi.articles.delete(deleteTarget.path)
 
       const currentPath = selectedPathRef.current
 
@@ -963,13 +1088,7 @@ export function App() {
     try {
       if (creating.type === 'directory') {
         expandDirectory(creating.parentPath)
-        await requestJson('/api/articles/directories', {
-          method: 'POST',
-          body: JSON.stringify({
-            parentPath: creating.parentPath,
-            name,
-          }),
-        })
+        await desktopApi.directories.create(creating.parentPath, name)
         await refreshTree()
       } else {
         const saved = await saveCurrentArticle()
@@ -979,13 +1098,11 @@ export function App() {
         }
 
         expandDirectory(creating.directoryPath)
-        const article = await requestJson<ArticleNode>('/api/articles', {
-          method: 'POST',
-          body: JSON.stringify({
-            directoryPath: creating.directoryPath,
-            name,
-          }),
-        })
+        const article = await desktopApi.articles.create(
+          creating.directoryPath,
+          name,
+          `# ${name}\n\n`,
+        )
 
         await refreshTree()
         await loadArticle(article.path, article.updatedAt)
@@ -1068,7 +1185,7 @@ export function App() {
     )
   }
 
-  function renderActionMenu(target: RenameTarget, canCreateDirectory = false) {
+  function renderActionMenu(target: RenameTarget) {
     if (openMenu?.type !== target.type || openMenu.path !== target.path) {
       return null
     }
@@ -1093,7 +1210,6 @@ export function App() {
               className="menu-item"
               role="menuitem"
               type="button"
-              disabled={!canCreateDirectory}
               onClick={() => startCreateDirectory(target.path)}
             >
               新目录
@@ -1169,13 +1285,16 @@ export function App() {
       )
     }
 
-    const canCreateDirectory = node.depth < maxDirectoryDepth
     const isExpanded = expandedDirectories.has(node.path)
     const isMenuOpen =
       openMenu?.type === 'directory' && openMenu.path === node.path
 
     return (
-      <li className={`tree-item depth-${node.depth}`} key={node.path}>
+      <li
+        className="tree-item"
+        key={node.path}
+        style={{ '--tree-depth': node.depth } as CSSProperties}
+      >
         <div className="directory-row">
           <button
             aria-expanded={isExpanded}
@@ -1205,14 +1324,11 @@ export function App() {
             >
               ⋯
             </button>
-            {renderActionMenu(
-              {
-                type: 'directory',
-                path: node.path,
-                name: node.name,
-              },
-              canCreateDirectory,
-            )}
+            {renderActionMenu({
+              type: 'directory',
+              path: node.path,
+              name: node.name,
+            })}
           </div>
         </div>
         {isExpanded ? (
@@ -1233,6 +1349,62 @@ export function App() {
           </>
         ) : null}
       </li>
+    )
+  }
+
+  async function handleContinueEditing() {
+    if (isResolvingClose) {
+      return
+    }
+
+    setIsResolvingClose(true)
+    try {
+      await desktopApi.app.resolveClose('continue-editing')
+      isCloseDecisionPendingRef.current = false
+      setIsCloseDecisionOpen(false)
+      setErrorMessage(null)
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error))
+    } finally {
+      setIsResolvingClose(false)
+    }
+  }
+
+  async function handleDiscardAndClose() {
+    if (isResolvingClose) {
+      return
+    }
+
+    setIsResolvingClose(true)
+    try {
+      await desktopApi.app.resolveClose('discard')
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error))
+      setIsResolvingClose(false)
+    }
+  }
+
+  if (isBootstrapping) {
+    return (
+      <main className="app-shell">
+        <div className="library-empty" role="status">
+          正在启动桌面应用
+        </div>
+      </main>
+    )
+  }
+
+  if (!rootPath) {
+    return (
+      <WelcomeScreen
+        recentRoots={recentRoots}
+        errorMessage={bootstrapError}
+        isOpening={isOpeningLibrary}
+        onChooseDirectory={() => void openLibrary({ type: 'choose' })}
+        onOpenRecent={(recentRootPath) =>
+          void openLibrary({ type: 'recent', rootPath: recentRootPath })
+        }
+      />
     )
   }
 
@@ -1616,36 +1788,43 @@ export function App() {
           </section>
         </div>
       ) : null}
+
+      {isCloseDecisionOpen ? (
+        <div className="modal-backdrop">
+          <section
+            aria-labelledby="close-failure-title"
+            aria-modal="true"
+            className="confirm-dialog"
+            role="dialog"
+          >
+            <div className="dialog-title" id="close-failure-title">
+              保存失败
+            </div>
+            <p className="dialog-copy">文章未能保存，请选择如何处理。</p>
+            <div className="dialog-actions">
+              <button
+                className="small-button"
+                type="button"
+                autoFocus
+                disabled={isResolvingClose}
+                onClick={() => void handleContinueEditing()}
+              >
+                继续编辑
+              </button>
+              <button
+                className="small-button danger"
+                type="button"
+                disabled={isResolvingClose}
+                onClick={() => void handleDiscardAndClose()}
+              >
+                放弃修改并退出
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   )
-}
-
-async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
-  })
-
-  if (!response.ok) {
-    let message = '请求失败'
-
-    try {
-      const body = (await response.json()) as { message?: string }
-
-      if (body.message) {
-        message = body.message
-      }
-    } catch {
-      message = response.statusText || message
-    }
-
-    throw new Error(message)
-  }
-
-  return response.json() as Promise<T>
 }
 
 function getSaveStateText(saveState: SaveState) {
@@ -1782,37 +1961,44 @@ function updateArticleChildrenUpdatedAt(
   return [nextChildren, changed]
 }
 
-function readLastArticlePath() {
+function getLastArticleStorageKey(rootPath: string) {
+  return `md2wechat:lastArticlePath:${encodeURIComponent(rootPath)}`
+}
+
+function readLastArticlePath(rootPath: string) {
   if (typeof window === 'undefined') {
     return null
   }
 
   try {
-    return window.localStorage.getItem(lastArticlePathStorageKey)
+    return window.localStorage.getItem(getLastArticleStorageKey(rootPath))
   } catch {
     return null
   }
 }
 
-function writeLastArticlePath(articlePath: string) {
+function writeLastArticlePath(rootPath: string, articlePath: string) {
   if (typeof window === 'undefined') {
     return
   }
 
   try {
-    window.localStorage.setItem(lastArticlePathStorageKey, articlePath)
+    window.localStorage.setItem(
+      getLastArticleStorageKey(rootPath),
+      articlePath,
+    )
   } catch {
     return
   }
 }
 
-function clearLastArticlePath() {
+function clearLastArticlePath(rootPath: string) {
   if (typeof window === 'undefined') {
     return
   }
 
   try {
-    window.localStorage.removeItem(lastArticlePathStorageKey)
+    window.localStorage.removeItem(getLastArticleStorageKey(rootPath))
   } catch {
     return
   }

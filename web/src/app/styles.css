@@ -92,6 +92,82 @@ textarea:disabled {
   background: var(--color-canvas);
 }
 
+.welcome-screen {
+  display: grid;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  place-items: center;
+  overflow: auto;
+  padding: 32px;
+  background: var(--color-canvas);
+}
+
+.welcome-card {
+  display: grid;
+  width: min(100%, 560px);
+  gap: 18px;
+  border-radius: var(--radius-md);
+  padding: 36px;
+  background: var(--color-paper);
+  box-shadow: var(--shadow-elevated);
+}
+
+.welcome-mark {
+  width: 42px;
+  height: 42px;
+  font-size: 20px;
+}
+
+.welcome-card h1 {
+  margin: 0;
+  font-size: 26px;
+}
+
+.welcome-open-button {
+  min-height: 42px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-paper);
+  background: var(--color-accent);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.welcome-error {
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+  font-size: 13px;
+}
+
+.welcome-recents {
+  display: grid;
+  gap: 6px;
+}
+
+.welcome-recents-title {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.welcome-recent-button {
+  min-width: 0;
+  min-height: 36px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  color: var(--color-text-soft);
+  background: var(--color-paper-muted);
+  cursor: pointer;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -405,6 +481,7 @@ textarea:focus-visible {
 .tree-item {
   display: grid;
   gap: 3px;
+  padding-inline-start: calc(var(--tree-depth, 0) * 0.75rem);
 }
 
 .directory-row,
@@ -591,10 +668,6 @@ textarea:focus-visible {
   color: var(--color-text-muted);
   font-size: 12px;
   font-weight: 600;
-}
-
-.depth-2 {
-  margin-left: 0;
 }
 
 .create-form {

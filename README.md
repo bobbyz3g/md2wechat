@@ -1,105 +1,57 @@
 # md2wechat
 
-md2wechat 是一个面向微信公众号写作的 Markdown 排版工具。
+md2wechat 是一个面向微信公众号写作的 Electron 桌面排版工具，支持管理本地 Markdown 文章库、实时预览公众号样式并复制富文本内容。
 
-它适合习惯用 Markdown 写文章，但最终需要发布到微信公众号的人。你可以在页面里输入 Markdown，查看接近公众号编辑器的排版效果，再把内容复制到公众号后台。
+## 环境要求
 
-当前版本服务本地写作和手动发布流程，目标是让内容作者更快得到一份能直接贴进微信公众号的文章。
+- Node.js 22.14 或更高版本
+- npm 10.9 或更高版本
 
-## 架构
-
-md2wechat 由三部分组成：
-
-- React + Vite 前端：提供文章树、Markdown 编辑器、公众号预览和复制富文本能力。
-- Go 本地应用服务：通过 `/api` 接口管理真实目录和 `.md` 文件，并能内嵌前端构建产物形成单二进制。
-- 文章库：保存真实 Markdown 文件，目录最多两层，文章必须位于目录中；开发环境默认使用项目内 `articles/`，分发版默认使用系统用户数据目录。
-
-开发环境下，Vite 会把 `/api` 请求代理到本地 Go 服务。前端不会直接访问任意系统目录，服务端只允许读写文章库目录，并校验路径不能越界。
-
-```text
-md2wechat
-├─ cmd/md2wechat/              # Go main 入口
-├─ internal/
-│  ├─ app/                     # 启动配置、监听端口、自动打开浏览器
-│  ├─ articles/                # 文章库路径校验、目录和 .md 文件读写
-│  └─ server/                  # /api 路由、JSON 请求响应、错误映射
-├─ web/                        # React + Vite 前端工程和嵌入式静态资源 handler
-├─ scripts/dev.mjs             # 同时启动 Go API 和 Vite 的开发脚本
-└─ tools/release/              # 多平台分发包构建脚本
-```
-
-当前 API 能力：
-
-- `GET /api/articles/tree`：读取文章树。
-- `POST /api/articles/directories`：新增目录。
-- `POST /api/articles`：新增文章。
-- `PATCH /api/articles/directories`：重命名目录。
-- `PATCH /api/articles`：重命名文章。
-- `DELETE /api/articles/directories?path=...`：删除空目录树。
-- `DELETE /api/articles?path=...`：删除文章。
-- `GET /api/articles/content?path=...`：读取文章内容。
-- `PUT /api/articles/content`：保存文章内容。
-
-切换文章时会先保存当前文章，保存成功后再读取目标文章。编辑过程中也会自动保存；如果保存失败，页面会保留在当前文章并显示错误提示。
-
-## 运行
-
-开发环境需要 Node.js 22.14+、npm 10.9+、Make 和 Go 1.26。前端依赖只安装在 `web/` 目录，根目录的 `Makefile` 负责统一编排 Go 和前端命令。
+首次检出后，在仓库根目录安装依赖：
 
 ```sh
-npm --prefix web install
-make dev
+npm install
 ```
 
-`make dev` 会同时启动 Go API 服务和 Vite 前端。开发环境的文章库固定为项目内 `articles/`，启动后在浏览器打开终端里显示的 Vite 地址。
-
-如果需要分别启动：
+## 开发运行
 
 ```sh
-make dev-api
-make dev-web
+npm run dev
 ```
 
-## 本地应用
+应用首次启动时会显示欢迎页。点击“打开文件夹”选择一个本地目录作为文章库；之后会记住最近使用的目录，并在再次启动时恢复上次打开的目录和文章。
 
-Go 服务支持以下参数：
+## 文章库与编辑
+
+- 文章库支持任意目录深度，只显示普通 `.md` 文件。
+- 切换文章或文章库前会先保存当前文章，编辑停止约 900ms 后也会自动保存。
+- 磁盘文件在本地没有未保存修改时被外部更新，应用会自动重新载入。
+- 磁盘文件与本地未保存内容同时变化时，应用会提示冲突，可选择重新载入或保留当前内容。
+- 点击“复制到公众号”可把预览区富文本复制到微信公众号编辑器。
+
+## 构建与发布
+
+打包当前平台的可运行桌面应用：
 
 ```sh
-go run ./cmd/md2wechat --host 127.0.0.1 --port 4174 --root articles --no-open
+npm run package
 ```
 
-- `--host`：监听地址，默认 `127.0.0.1`。
-- `--port`：监听端口，默认 `4174`；端口被占用时会自动切换到可用端口。
-- `--root`：文章库目录；优先级高于环境变量。
-- `--no-open`：启动后不自动打开浏览器。
-
-文章库路径优先级：
-
-1. `--root`
-2. `MD2WECHAT_ARTICLE_ROOT`
-3. 当前所在路径
-
-构建 Linux、Windows 和 macOS 分发包：
+产物位于 `out/`。生成当前宿主平台的安装包：
 
 ```sh
-make release
+npm run make
 ```
 
-该命令会先执行前端构建，再交叉编译 Linux、Windows 和 macOS 的 x86/ARM 产物，最终输出到 `release/`：
+安装包位于 `out/make/`。Electron Forge 按宿主平台构建，不能在一个平台交叉生成全部安装包：
 
-- `md2wechat-linux-amd64.tar.gz`
-- `md2wechat-linux-arm64.tar.gz`
-- `md2wechat-windows-amd64.zip`
-- `md2wechat-windows-arm64.zip`
-- `md2wechat-darwin-amd64.tar.gz`
-- `md2wechat-darwin-arm64.tar.gz`
+- Windows 安装包必须在 Windows 原生检出中构建。
+- WSL 中执行会生成 Linux 产物，不会生成 Windows 安装包。
+- macOS DMG 必须在 macOS 中构建。
 
-常用验证命令：
+## 验证
 
 ```sh
-go test ./cmd/md2wechat ./internal/... ./web ./tools/release
-go vet ./cmd/md2wechat ./internal/... ./web ./tools/release
-make lint
-make test
-make build
+npm run check
+npm run package
 ```
