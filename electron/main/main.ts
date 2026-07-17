@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, type WebContents } from 'electron'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -76,8 +76,21 @@ async function createWindow(configStore: ConfigStore) {
       event.preventDefault()
     }
   })
+  const canWriteClipboard = (
+    webContents: WebContents | null,
+    permission: string,
+  ) =>
+    permission === 'clipboard-sanitized-write' &&
+    webContents === mainWindow?.webContents &&
+    isAllowedNavigation(webContents.getURL(), rendererUrl)
+
+  mainWindow.webContents.session.setPermissionCheckHandler(
+    (webContents, permission) =>
+      canWriteClipboard(webContents, permission),
+  )
   mainWindow.webContents.session.setPermissionRequestHandler(
-    (_webContents, _permission, callback) => callback(false),
+    (webContents, permission, callback) =>
+      callback(canWriteClipboard(webContents, permission)),
   )
 
   mainWindow.on('close', (event) => {
