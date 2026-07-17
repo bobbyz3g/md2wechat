@@ -16,6 +16,7 @@
     "dev": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",
+    "check": "npm run typecheck && npm run lint && npm test",
     "typecheck": "tsc -b web/tsconfig.json",
     "lint": "eslint --config web/eslint.config.js .",
     "test": "vitest run --config web/vite.config.ts",

@@ -6,7 +6,6 @@ md2wechat 是一个面向微信公众号写作的 Electron 桌面排版工具。
 
 - Node.js 22.14 或更高版本
 - npm 10.9 或更高版本
-- Make（使用下方 `make` 命令时需要）
 
 首次检出后，在仓库根目录安装依赖：
 
@@ -17,13 +16,7 @@ npm install
 ## 开发运行
 
 ```sh
-make dev
-```
-
-也可以直接运行：
-
-```sh
-npm run start
+npm run dev
 ```
 
 应用首次启动时会显示欢迎页。点击“打开文件夹”选择一个本地目录作为文章库；之后会记住最近使用的目录，并在再次启动时恢复上次打开的目录和文章。
@@ -41,13 +34,13 @@ npm run start
 打包当前平台的可运行桌面应用：
 
 ```sh
-make build
+npm run package
 ```
 
 产物位于 `out/`。生成当前宿主平台的安装包：
 
 ```sh
-make release
+npm run make
 ```
 
 安装包位于 `out/make/`。Electron Forge 按宿主平台构建，不能在一个平台交叉生成全部安装包：
@@ -59,7 +52,6 @@ make release
 ## 验证
 
 ```sh
-make lint
-make test
-make build
+npm run check
+npm run package
 ```
