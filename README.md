@@ -63,7 +63,3 @@ make lint
 make test
 make build
 ```
-
-## 旧实现回滚
-
-第一阶段仍保留 `cmd/`、`internal/`、`tools/release/` 中的 Go 实现和 Makefile 的 Go 专用目标，必要时可用于回滚；Electron 验收完成前不删除这些源码和旧发布工具。
