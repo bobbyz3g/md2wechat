@@ -14,10 +14,12 @@ import { copyWechatHtml } from '../clipboard/copyWechatHtml'
 import { renderMarkdown } from '../core/renderMarkdown'
 import { isThemeId, themeList, type ThemeId } from '../core/themes'
 import { desktopApi } from '../desktop/api'
+import { WelcomeScreen } from './WelcomeScreen'
 import type {
   ArticleNode,
   ArticleTree,
   DirectoryNode,
+  LibraryOpenResult,
   TreeNode,
 } from '../../../electron/shared/types'
 
@@ -75,6 +77,9 @@ export function App() {
   const [recentRoots, setRecentRoots] = useState<string[]>([])
   const [bootstrapError, setBootstrapError] = useState<string | null>(null)
   const [isBootstrapping, setIsBootstrapping] = useState(true)
+  const [isOpeningLibrary, setIsOpeningLibrary] = useState(false)
+  const [isCloseDecisionOpen, setIsCloseDecisionOpen] = useState(false)
+  const [isResolvingClose, setIsResolvingClose] = useState(false)
   const [tree, setTree] = useState<ArticleTree | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [markdown, setMarkdown] = useState('')
@@ -117,6 +122,9 @@ export function App() {
   const editorScrollRef = useRef<HTMLTextAreaElement | null>(null)
   const previewScrollRef = useRef<HTMLElement | null>(null)
   const syncScrollLockRef = useRef(false)
+  const isOpeningLibraryRef = useRef(false)
+  const isCloseSaveInProgressRef = useRef(false)
+  const isCloseDecisionPendingRef = useRef(false)
 
   const rendered = useMemo(
     () => renderMarkdown(markdown, { themeId }),
@@ -218,6 +226,129 @@ export function App() {
     }
   }, [])
 
+  const resetCurrentArticleState = useCallback(() => {
+    selectedPathRef.current = null
+    markdownRef.current = ''
+    lastSavedMarkdownRef.current = ''
+    lastKnownUpdatedAtRef.current = null
+
+    setSelectedPath(null)
+    setMarkdown('')
+    setLastSavedMarkdown('')
+    setLastSavedAt(null)
+    setCopyState('idle')
+    setDiskChangeNotice(null)
+    setSaveState('saved')
+  }, [])
+
+  const clearCurrentArticle = useCallback(() => {
+    const activeRootPath = rootPathRef.current
+    if (activeRootPath) {
+      clearLastArticlePath(activeRootPath)
+    }
+    resetCurrentArticleState()
+  }, [resetCurrentArticleState])
+
+  const activateLibrary = useCallback(
+    async (openedLibrary: LibraryOpenResult) => {
+      rootPathRef.current = openedLibrary.rootPath
+      resetCurrentArticleState()
+      setRootPath(openedLibrary.rootPath)
+      setRecentRoots(openedLibrary.recentRoots)
+      setBootstrapError(null)
+      setTree(openedLibrary.tree)
+      setExpandedDirectories(new Set())
+      setCreating(null)
+      setCreateName('')
+      setOpenMenu(null)
+      setIsCreateMenuOpen(false)
+      setRenameTarget(null)
+      setRenameName('')
+      setDeleteTarget(null)
+      setDeleteErrorMessage(null)
+      setErrorMessage(null)
+
+      const lastArticlePath = readLastArticlePath(openedLibrary.rootPath)
+      const lastArticle = lastArticlePath
+        ? findArticle(openedLibrary.tree, lastArticlePath)
+        : null
+
+      if (!lastArticle) {
+        clearLastArticlePath(openedLibrary.rootPath)
+        return
+      }
+
+      setExpandedDirectories(
+        new Set(getParentDirectoryPaths(lastArticle.path)),
+      )
+      await loadArticle(lastArticle.path, lastArticle.updatedAt)
+    },
+    [loadArticle, resetCurrentArticleState],
+  )
+
+  const openLibrary = useCallback(
+    async (
+      request:
+        | { type: 'choose' }
+        | { type: 'recent'; rootPath: string },
+    ) => {
+      if (isOpeningLibraryRef.current) {
+        return
+      }
+
+      isOpeningLibraryRef.current = true
+      setIsOpeningLibrary(true)
+
+      try {
+        const saved = await saveCurrentArticle()
+        if (!saved) {
+          return
+        }
+
+        const openedLibrary =
+          request.type === 'choose'
+            ? await desktopApi.library.choose()
+            : await desktopApi.library.open(request.rootPath)
+
+        if (!openedLibrary) {
+          return
+        }
+
+        await activateLibrary(openedLibrary)
+      } catch (error) {
+        const message = getErrorMessage(error)
+        if (request.type === 'recent') {
+          setRecentRoots((currentRoots) =>
+            currentRoots.filter((rootPath) => rootPath !== request.rootPath),
+          )
+        }
+        if (rootPathRef.current) {
+          setErrorMessage(message)
+        } else {
+          setBootstrapError(message)
+        }
+      } finally {
+        isOpeningLibraryRef.current = false
+        setIsOpeningLibrary(false)
+      }
+    },
+    [activateLibrary, saveCurrentArticle],
+  )
+
+  const refreshAfterMissingArticle = useCallback(
+    async (articlePath: string) => {
+      const nextTree = await refreshTree()
+      if (
+        selectedPathRef.current === articlePath &&
+        !findArticle(nextTree, articlePath)
+      ) {
+        clearCurrentArticle()
+      }
+      setErrorMessage('文章不存在')
+    },
+    [clearCurrentArticle, refreshTree],
+  )
+
   const resetPaneScrollPositions = useCallback(() => {
     syncScrollLockRef.current = false
 
@@ -305,6 +436,50 @@ export function App() {
     }
   }, [loadArticle])
 
+  useEffect(
+    () =>
+      desktopApi.app.onOpenLibraryRequested((requestedRootPath) => {
+        void openLibrary(
+          requestedRootPath
+            ? { type: 'recent', rootPath: requestedRootPath }
+            : { type: 'choose' },
+        )
+      }),
+    [openLibrary],
+  )
+
+  useEffect(
+    () =>
+      desktopApi.app.onBeforeClose(() => {
+        if (
+          isCloseSaveInProgressRef.current ||
+          isCloseDecisionPendingRef.current
+        ) {
+          return
+        }
+
+        isCloseSaveInProgressRef.current = true
+
+        void saveCurrentArticle()
+          .then(async (saved) => {
+            if (saved) {
+              await desktopApi.app.resolveClose('saved')
+              return
+            }
+
+            isCloseDecisionPendingRef.current = true
+            setIsCloseDecisionOpen(true)
+          })
+          .catch((error: unknown) => {
+            setErrorMessage(getErrorMessage(error))
+          })
+          .finally(() => {
+            isCloseSaveInProgressRef.current = false
+          })
+      }),
+    [saveCurrentArticle],
+  )
+
   useEffect(() => {
     if (
       !selectedPath ||
@@ -391,7 +566,12 @@ export function App() {
         }
       } catch (error) {
         if (!ignore) {
-          setErrorMessage(getErrorMessage(error))
+          const message = getErrorMessage(error)
+          if (message === '文章不存在') {
+            await refreshAfterMissingArticle(articlePath)
+          } else {
+            setErrorMessage(message)
+          }
         }
       }
     }
@@ -404,7 +584,12 @@ export function App() {
       ignore = true
       window.clearInterval(timer)
     }
-  }, [loadArticle, refreshTree, selectedPath])
+  }, [
+    loadArticle,
+    refreshAfterMissingArticle,
+    refreshTree,
+    selectedPath,
+  ])
 
   useEffect(() => {
     if (diskChangeNotice?.type !== 'reloaded') {
@@ -563,7 +748,12 @@ export function App() {
       await refreshTree()
       setDiskChangeNotice({ type: 'reloaded' })
     } catch (error) {
-      setErrorMessage(getErrorMessage(error))
+      const message = getErrorMessage(error)
+      if (message === '文章不存在') {
+        await refreshAfterMissingArticle(articlePath)
+      } else {
+        setErrorMessage(message)
+      }
     }
   }
 
@@ -592,7 +782,12 @@ export function App() {
       await loadArticle(articlePath, article?.updatedAt)
     } catch (error) {
       setSaveState('failed')
-      setErrorMessage(getErrorMessage(error))
+      const message = getErrorMessage(error)
+      if (message === '文章不存在') {
+        await refreshAfterMissingArticle(articlePath)
+      } else {
+        setErrorMessage(message)
+      }
     } finally {
       setSwitchingPath(null)
     }
@@ -828,25 +1023,6 @@ export function App() {
 
       return nextDirectories
     })
-  }
-
-  function clearCurrentArticle() {
-    selectedPathRef.current = null
-    markdownRef.current = ''
-    lastSavedMarkdownRef.current = ''
-    lastKnownUpdatedAtRef.current = null
-
-    const activeRootPath = rootPathRef.current
-    if (activeRootPath) {
-      clearLastArticlePath(activeRootPath)
-    }
-    setSelectedPath(null)
-    setMarkdown('')
-    setLastSavedMarkdown('')
-    setLastSavedAt(null)
-    setCopyState('idle')
-    setDiskChangeNotice(null)
-    setSaveState('saved')
   }
 
   async function handleDelete() {
@@ -1176,18 +1352,59 @@ export function App() {
     )
   }
 
-  if (isBootstrapping || !rootPath) {
+  async function handleContinueEditing() {
+    if (isResolvingClose) {
+      return
+    }
+
+    setIsResolvingClose(true)
+    try {
+      await desktopApi.app.resolveClose('continue-editing')
+      isCloseDecisionPendingRef.current = false
+      setIsCloseDecisionOpen(false)
+      setErrorMessage(null)
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error))
+    } finally {
+      setIsResolvingClose(false)
+    }
+  }
+
+  async function handleDiscardAndClose() {
+    if (isResolvingClose) {
+      return
+    }
+
+    setIsResolvingClose(true)
+    try {
+      await desktopApi.app.resolveClose('discard')
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error))
+      setIsResolvingClose(false)
+    }
+  }
+
+  if (isBootstrapping) {
     return (
-      <main
-        className="app-shell"
-        data-recent-root-count={recentRoots.length}
-      >
+      <main className="app-shell">
         <div className="library-empty" role="status">
-          {isBootstrapping
-            ? '正在启动桌面应用'
-            : (bootstrapError ?? '请选择文章库')}
+          正在启动桌面应用
         </div>
       </main>
+    )
+  }
+
+  if (!rootPath) {
+    return (
+      <WelcomeScreen
+        recentRoots={recentRoots}
+        errorMessage={bootstrapError}
+        isOpening={isOpeningLibrary}
+        onChooseDirectory={() => void openLibrary({ type: 'choose' })}
+        onOpenRecent={(recentRootPath) =>
+          void openLibrary({ type: 'recent', rootPath: recentRootPath })
+        }
+      />
     )
   }
 
@@ -1566,6 +1783,41 @@ export function App() {
                 onClick={() => void handleDelete()}
               >
                 {isDeleting ? '删除中' : '删除'}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {isCloseDecisionOpen ? (
+        <div className="modal-backdrop">
+          <section
+            aria-labelledby="close-failure-title"
+            aria-modal="true"
+            className="confirm-dialog"
+            role="dialog"
+          >
+            <div className="dialog-title" id="close-failure-title">
+              保存失败
+            </div>
+            <p className="dialog-copy">文章未能保存，请选择如何处理。</p>
+            <div className="dialog-actions">
+              <button
+                className="small-button"
+                type="button"
+                autoFocus
+                disabled={isResolvingClose}
+                onClick={() => void handleContinueEditing()}
+              >
+                继续编辑
+              </button>
+              <button
+                className="small-button danger"
+                type="button"
+                disabled={isResolvingClose}
+                onClick={() => void handleDiscardAndClose()}
+              >
+                放弃修改并退出
               </button>
             </div>
           </section>
