@@ -8,6 +8,11 @@ web/.vite/
 coverage
 .vite/
 out/
+/build/icon-source.png
+/build/icons/*
+!/build/icons/icon.png
+!/build/icons/icon.ico
+!/build/icons/icon.icns
 .codex
 /articles/
 /md2wechat

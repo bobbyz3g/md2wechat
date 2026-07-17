@@ -4,23 +4,23 @@ GO_PACKAGES := ./cmd/md2wechat ./internal/... ./web ./tools/release
 
 help:
 	@echo "可用命令："
-	@echo "  make dev              同时启动 Go API 服务和 Vite 前端开发服务"
+	@echo "  make dev              启动 Electron 桌面应用开发环境"
 	@echo "  make dev-api          只启动 Go API 服务"
 	@echo "  make dev-web          只启动 Vite 前端开发服务"
-	@echo "  make build            构建前端资源并编译本地应用二进制"
+	@echo "  make build            打包当前平台的 Electron 桌面应用"
 	@echo "  make build-web        只构建前端资源"
 	@echo "  make build-server     只编译内嵌前端资源的 Go 二进制"
 	@echo "  make install          构建前端资源并安装本地 Go 命令"
-	@echo "  make release          构建 Linux/Windows/macOS 的 x86 和 ARM 分发包"
-	@echo "  make test             运行 Go 和前端测试"
+	@echo "  make release          生成当前平台的 Electron 安装包"
+	@echo "  make test             运行现有前端测试"
 	@echo "  make test-go          只运行 Go 测试"
 	@echo "  make test-web         只运行前端测试"
-	@echo "  make lint             运行 Go vet 和前端 lint"
+	@echo "  make lint             运行 TypeScript 类型检查和前端 lint"
 	@echo "  make lint-go          只运行 Go vet"
 	@echo "  make lint-web         只运行前端 lint"
 
 dev:
-	node scripts/dev.mjs
+	npm run start
 
 dev-api:
 	go run ./cmd/md2wechat --no-open
@@ -28,7 +28,8 @@ dev-api:
 dev-web:
 	npm --prefix web run dev
 
-build: build-web build-server
+build:
+	npm run package
 
 build-web:
 	npm --prefix web run build
@@ -40,9 +41,10 @@ install: build-web
 	go install -tags release ./cmd/md2wechat
 
 release:
-	go run ./tools/release
+	npm run make
 
-test: test-go test-web
+test:
+	npm test
 
 test-go:
 	go test $(GO_PACKAGES)
@@ -50,7 +52,9 @@ test-go:
 test-web:
 	npm --prefix web run test
 
-lint: lint-go lint-web
+lint:
+	npm run typecheck
+	npm run lint
 
 lint-go:
 	go vet $(GO_PACKAGES)
