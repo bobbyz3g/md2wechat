@@ -139,10 +139,10 @@ export function App() {
     ? (lastSavedAt ?? currentArticle?.updatedAt ?? null)
     : null
   const previewFrameClassName = `preview-frame is-${previewMode}`
-  const workspaceClassName = `workspace${
+  const appShellClassName = `app-shell${
     isLibraryCollapsed ? ' is-library-collapsed' : ''
   }`
-  const libraryPaneClassName = `pane library-pane${
+  const libraryPaneClassName = `library-pane${
     isLibraryCollapsed ? ' is-collapsed' : ''
   }`
 
@@ -1386,10 +1386,11 @@ export function App() {
 
   if (isBootstrapping) {
     return (
-      <main className="app-shell">
-        <div className="library-empty" role="status">
-          正在启动桌面应用
-        </div>
+      <main className="boot-screen">
+        <span className="brand-mark boot-mark" aria-hidden="true">
+          文
+        </span>
+        <div role="status">正在打开写作空间</div>
       </main>
     )
   }
@@ -1409,97 +1410,72 @@ export function App() {
   }
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div className="topbar-left">
-          <div className="brand">
+    <main className={appShellClassName}>
+      <a className="skip-link" href="#editor-workspace">
+        跳到编辑区
+      </a>
+
+      <aside className={libraryPaneClassName} aria-label="文章管理">
+        <div className="sidebar-top">
+          <div className="brand" title="md2wechat">
             <span className="brand-mark" aria-hidden="true">
               文
             </span>
-            <div>
-              <h1>md2wechat</h1>
-              <p>Markdown 排版工作台</p>
-            </div>
+            {isLibraryCollapsed ? null : (
+              <div className="brand-copy">
+                <h1>md2wechat</h1>
+                <p>公众号写作空间</p>
+              </div>
+            )}
           </div>
-          <div className="current-article" aria-live="polite">
-            <span className="current-article-label">当前文章</span>
-            <span className="current-article-name">
-              {currentArticle?.name ?? '未选择文章'}
-            </span>
-            <span className="current-article-path">
-              {selectedPath ?? '从左侧文章库选择或创建文章'}
-            </span>
-          </div>
-        </div>
-        <div className="topbar-actions">
           <button
-            className="copy-button"
+            className="library-collapse-button"
             type="button"
-            disabled={!selectedPath || saveState === 'loading'}
-            onClick={handleCopy}
+            title={isLibraryCollapsed ? '展开文章库' : '收起文章库'}
+            aria-label={isLibraryCollapsed ? '展开文章库' : '收起文章库'}
+            aria-expanded={!isLibraryCollapsed}
+            onClick={toggleLibraryCollapsed}
           >
-            {copyState === 'copied'
-              ? '已复制'
-              : copyState === 'failed'
-                ? '复制失败'
-                : '复制富文本'}
+            <svg
+              className="library-collapse-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M9 4v16" />
+              <path
+                d={
+                  isLibraryCollapsed ? 'M14 9l3 3-3 3' : 'M16 9l-3 3 3 3'
+                }
+              />
+            </svg>
           </button>
         </div>
-      </header>
 
-      <section className={workspaceClassName} aria-label="Markdown 编辑和预览">
-        <aside className={libraryPaneClassName} aria-label="文章管理">
-          <div className="pane-title library-title">
-            {isLibraryCollapsed ? null : <span>文章库</span>}
-            <div className="library-title-actions">
-              <button
-                className="library-collapse-button"
-                type="button"
-                title={isLibraryCollapsed ? '展开目录区域' : '收起目录区域'}
-                aria-label={
-                  isLibraryCollapsed ? '展开目录区域' : '收起目录区域'
-                }
-                aria-expanded={!isLibraryCollapsed}
-                onClick={toggleLibraryCollapsed}
-              >
-                <svg
-                  className="library-collapse-icon"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <rect x="3" y="4" width="18" height="16" rx="2" />
-                  <path d="M9 4v16" />
-                  <path
-                    d={
-                      isLibraryCollapsed
-                        ? 'M14 9l3 3-3 3'
-                        : 'M16 9l-3 3 3 3'
-                    }
-                  />
-                </svg>
-              </button>
-              {isLibraryCollapsed ? null : (
+        {isLibraryCollapsed ? (
+          <div className="library-collapsed-rail" aria-hidden="true">
+            <span className="library-collapsed-label">文章库</span>
+          </div>
+        ) : (
+          <>
+            <div className="library-title">
+              <span>我的文章</span>
+              <div className="library-title-actions">
                 <div className="create-menu-shell">
                   <button
                     aria-expanded={isCreateMenuOpen}
                     aria-haspopup="menu"
-                    className="small-button primary"
+                    className="sidebar-create-button"
                     type="button"
                     onClick={toggleCreateMenu}
                   >
+                    <span aria-hidden="true">＋</span>
                     新建
                   </button>
                   {renderHeaderCreateMenu()}
                 </div>
-              )}
+              </div>
             </div>
-          </div>
-          {isLibraryCollapsed ? (
-            <div className="library-collapsed-rail" aria-hidden="true">
-              <span className="library-collapsed-mark">文</span>
-              <span className="library-collapsed-label">文章库</span>
-            </div>
-          ) : (
             <div className="library-scroll">
               {renderCreateForm(
                 (creating?.type === 'directory' &&
@@ -1521,161 +1497,195 @@ export function App() {
                 <div className="library-empty">正在读取文章库</div>
               )}
             </div>
-          )}
-        </aside>
+            <div className="sidebar-footer" title={rootPath}>
+              <span className="sidebar-footer-dot" aria-hidden="true" />
+              <span>{rootPath}</span>
+            </div>
+          </>
+        )}
+      </aside>
+
+      <section className="app-main">
+        <header className="topbar">
+          <div className="topbar-document" aria-live="polite">
+            <span className="current-article-name">
+              {currentArticle?.name ?? '开始一篇文章'}
+            </span>
+            <span className="current-article-path">
+              {selectedPath ?? '从文章库选择或新建文章'}
+            </span>
+          </div>
+          <div className="topbar-actions">
+            <span className={`topbar-save-state ${saveState}`}>
+              {getSaveStateText(saveState)}
+            </span>
+            <button
+              className="copy-button"
+              type="button"
+              disabled={!selectedPath || saveState === 'loading'}
+              onClick={handleCopy}
+            >
+              {copyState === 'copied'
+                ? '已复制'
+                : copyState === 'failed'
+                  ? '复制失败'
+                  : '复制到公众号'}
+            </button>
+          </div>
+        </header>
 
         <section
-          className="pane editor-pane"
-          aria-labelledby="editor-title"
+          className="workspace"
+          id="editor-workspace"
+          aria-label="Markdown 编辑和预览"
         >
-          <span className="pane-title editor-title" id="editor-title">
-            <span>Markdown</span>
-            <span>{currentArticle?.name ?? '未选择文章'}</span>
-          </span>
-          {diskChangeNotice?.type === 'reloaded' ? (
-            <div className="disk-reload-notice" role="status">
-              检测到磁盘变更，已重新载入文章
-            </div>
-          ) : null}
-          {diskChangeNotice?.type === 'conflict' ? (
-            <div className="disk-change-banner" role="alert">
-              <span>磁盘文件已变化</span>
-              <div className="disk-change-actions">
-                <button
-                  className="small-button primary"
-                  type="button"
-                  onClick={() =>
-                    void handleReloadChangedArticle(diskChangeNotice.updatedAt)
-                  }
-                >
-                  重新载入
-                </button>
-                <button
-                  className="small-button"
-                  type="button"
-                  onClick={() =>
-                    handleKeepCurrentArticle(diskChangeNotice.updatedAt)
-                  }
-                >
-                  保留当前
-                </button>
-              </div>
-            </div>
-          ) : null}
-          <textarea
-            ref={editorScrollRef}
+          <section
+            className="pane editor-pane"
             aria-labelledby="editor-title"
-            value={markdown}
-            disabled={!selectedPath || saveState === 'loading'}
-            onChange={(event) => {
-              handleMarkdownChange(event.target.value)
-            }}
-            onScroll={handleEditorScroll}
-            placeholder="选择左侧文章后开始编辑"
-            spellCheck={false}
-          />
-        </section>
+          >
+            <span className="pane-title editor-title" id="editor-title">
+              <span>Markdown</span>
+              <span>{currentArticle?.name ?? '未选择文章'}</span>
+            </span>
+            {diskChangeNotice?.type === 'reloaded' ? (
+              <div className="disk-reload-notice" role="status">
+                检测到磁盘变更，已重新载入文章
+              </div>
+            ) : null}
+            {diskChangeNotice?.type === 'conflict' ? (
+              <div className="disk-change-banner" role="alert">
+                <span>磁盘文件已变化</span>
+                <div className="disk-change-actions">
+                  <button
+                    className="small-button primary"
+                    type="button"
+                    onClick={() =>
+                      void handleReloadChangedArticle(diskChangeNotice.updatedAt)
+                    }
+                  >
+                    重新载入
+                  </button>
+                  <button
+                    className="small-button"
+                    type="button"
+                    onClick={() =>
+                      handleKeepCurrentArticle(diskChangeNotice.updatedAt)
+                    }
+                  >
+                    保留当前
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            <textarea
+              ref={editorScrollRef}
+              aria-labelledby="editor-title"
+              value={markdown}
+              disabled={!selectedPath || saveState === 'loading'}
+              onChange={(event) => {
+                handleMarkdownChange(event.target.value)
+              }}
+              onScroll={handleEditorScroll}
+              placeholder="选择左侧文章后开始编辑"
+              spellCheck={false}
+            />
+          </section>
 
-        <section className="pane preview-pane" aria-labelledby="preview-title">
-          <div className="pane-title preview-toolbar">
-            <span id="preview-title">微信公众号预览</span>
-            <div className="preview-toolbar-actions">
-              <label className="theme-select-label">
-                <span>主题</span>
-                <select
-                  className="theme-select"
-                  value={themeId}
-                  onChange={(event) => {
-                    handleThemeChange(event.target.value)
-                  }}
-                >
-                  {themeList.map((theme) => (
-                    <option key={theme.id} value={theme.id}>
-                      {theme.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="device-toggle" role="group" aria-label="预览设备">
-                <button
-                  className={`device-toggle-button${
-                    previewMode === 'desktop' ? ' is-active' : ''
-                  }`}
-                  type="button"
-                  title="桌面预览"
-                  aria-label="桌面预览"
-                  aria-pressed={previewMode === 'desktop'}
-                  onClick={() => {
-                    setPreviewMode('desktop')
-                  }}
-                >
-                  <svg
-                    className="device-toggle-icon"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
+          <section className="pane preview-pane" aria-labelledby="preview-title">
+            <div className="pane-title preview-toolbar">
+              <span id="preview-title">微信公众号预览</span>
+              <div className="preview-toolbar-actions">
+                <label className="theme-select-label">
+                  <span>主题</span>
+                  <select
+                    className="theme-select"
+                    value={themeId}
+                    onChange={(event) => {
+                      handleThemeChange(event.target.value)
+                    }}
                   >
-                    <rect x="3" y="4" width="18" height="13" rx="2" />
-                    <path d="M8 21h8" />
-                    <path d="M12 17v4" />
-                  </svg>
-                </button>
-                <button
-                  className={`device-toggle-button${
-                    previewMode === 'mobile' ? ' is-active' : ''
-                  }`}
-                  type="button"
-                  title="手机预览"
-                  aria-label="手机预览"
-                  aria-pressed={previewMode === 'mobile'}
-                  onClick={() => {
-                    setPreviewMode('mobile')
-                  }}
-                >
-                  <svg
-                    className="device-toggle-icon"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
+                    {themeList.map((theme) => (
+                      <option key={theme.id} value={theme.id}>
+                        {theme.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="device-toggle" role="group" aria-label="预览设备">
+                  <button
+                    className={`device-toggle-button${
+                      previewMode === 'desktop' ? ' is-active' : ''
+                    }`}
+                    type="button"
+                    title="桌面预览"
+                    aria-label="桌面预览"
+                    aria-pressed={previewMode === 'desktop'}
+                    onClick={() => {
+                      setPreviewMode('desktop')
+                    }}
                   >
-                    <rect x="7" y="2" width="10" height="20" rx="2" />
-                    <path d="M11 18h2" />
-                  </svg>
-                </button>
+                    <svg
+                      className="device-toggle-icon"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <rect x="3" y="4" width="18" height="13" rx="2" />
+                      <path d="M8 21h8" />
+                      <path d="M12 17v4" />
+                    </svg>
+                  </button>
+                  <button
+                    className={`device-toggle-button${
+                      previewMode === 'mobile' ? ' is-active' : ''
+                    }`}
+                    type="button"
+                    title="手机预览"
+                    aria-label="手机预览"
+                    aria-pressed={previewMode === 'mobile'}
+                    onClick={() => {
+                      setPreviewMode('mobile')
+                    }}
+                  >
+                    <svg
+                      className="device-toggle-icon"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <rect x="7" y="2" width="10" height="20" rx="2" />
+                      <path d="M11 18h2" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-          <article
-            ref={previewScrollRef}
-            className="wechat-preview"
-            onScroll={handlePreviewScroll}
-          >
-            <div
-              className={previewFrameClassName}
-              dangerouslySetInnerHTML={{ __html: rendered.html }}
-            />
-          </article>
+            <article
+              ref={previewScrollRef}
+              className="wechat-preview"
+              onScroll={handlePreviewScroll}
+            >
+              <div
+                className={previewFrameClassName}
+                dangerouslySetInnerHTML={{ __html: rendered.html }}
+              />
+            </article>
+          </section>
         </section>
-      </section>
 
-      <footer className="status-bar" aria-label="文章状态">
-        <span className={`status-item status-save ${saveState}`}>
-          {getSaveStateText(saveState)}
-        </span>
-        <span className="status-divider" aria-hidden="true" />
-        <span className="status-item">
-          字数：
-          <span className="status-value">{articleStats.characterCount}</span>
-        </span>
-        <span className="status-item">
-          阅读：
-          <span className="status-value">
-            {formatReadTime(articleStats.readTimeMinutes)}
+        <footer className="status-bar" aria-label="文章状态">
+          <span className="status-item">
+            <span className="status-value">{articleStats.characterCount}</span>
+            字
           </span>
-        </span>
-        <span className="status-item">
-          最后保存：
-          <span className="status-value">{formatSavedAt(displayedSavedAt)}</span>
-        </span>
-      </footer>
+          <span className="status-divider" aria-hidden="true" />
+          <span className="status-item">
+            约 {formatReadTime(articleStats.readTimeMinutes)}
+          </span>
+          <span className="status-spacer" />
+          <span className="status-item">
+            最后保存 {formatSavedAt(displayedSavedAt)}
+          </span>
+        </footer>
+      </section>
 
       {errorMessage ? (
         <div className="app-message" role="alert">
