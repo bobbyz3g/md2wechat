@@ -1244,7 +1244,15 @@ export function App() {
         openMenu?.type === 'article' && openMenu.path === node.path
 
       return (
-        <li className="tree-item" key={node.path}>
+        <li
+          className="tree-item"
+          key={node.path}
+          style={
+            {
+              '--tree-depth': Math.max(0, node.path.split('/').length - 1),
+            } as CSSProperties
+          }
+        >
           <div
             className={`article-row${isActive ? ' is-active' : ''}`}
           >
@@ -1254,7 +1262,14 @@ export function App() {
               disabled={saveState === 'loading' || Boolean(switchingPath)}
               onClick={() => void handleSelectArticle(node.path)}
             >
-              <span className="article-dot" aria-hidden="true" />
+              <svg
+                className="article-icon"
+                viewBox="0 0 16 16"
+                aria-hidden="true"
+              >
+                <path d="M4.25 1.75h5l2.5 2.5v10H4.25z" />
+                <path d="M9.25 1.75v2.5h2.5M6.25 7h3.5M6.25 9.5h3.5" />
+              </svg>
               <span className="tree-name">{node.name}</span>
               {isSwitching ? <span className="row-note">切换中</span> : null}
             </button>
@@ -1293,7 +1308,7 @@ export function App() {
       <li
         className="tree-item"
         key={node.path}
-        style={{ '--tree-depth': node.depth } as CSSProperties}
+        style={{ '--tree-depth': Math.max(0, node.depth - 1) } as CSSProperties}
       >
         <div className="directory-row">
           <button
@@ -1305,7 +1320,14 @@ export function App() {
             <span className="expand-indicator" aria-hidden="true">
               {isExpanded ? '▾' : '▸'}
             </span>
-            <span className="directory-marker" aria-hidden="true" />
+            <svg
+              className="directory-marker"
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+            >
+              <path d="M1.75 4.25h4l1.25 1.5h7.25v7.5H1.75z" />
+              <path d="M1.75 5.75v-3h4l1.25 1.5h6.25v1.5" />
+            </svg>
             <span className="tree-name">{node.name}</span>
           </button>
           <div className="row-actions menu-shell">
@@ -1418,14 +1440,13 @@ export function App() {
       <aside className={libraryPaneClassName} aria-label="文章管理">
         <div className="sidebar-top">
           <div className="brand" title="md2wechat">
-            <span className="brand-mark" aria-hidden="true">
-              文
-            </span>
             {isLibraryCollapsed ? null : (
-              <div className="brand-copy">
+              <>
                 <h1>md2wechat</h1>
-                <p>公众号写作空间</p>
-              </div>
+                <span className="sidebar-brand-chevron" aria-hidden="true">
+                  ⌄
+                </span>
+              </>
             )}
           </div>
           <button
@@ -1458,23 +1479,26 @@ export function App() {
           </div>
         ) : (
           <>
-            <div className="library-title">
-              <span>我的文章</span>
-              <div className="library-title-actions">
-                <div className="create-menu-shell">
-                  <button
-                    aria-expanded={isCreateMenuOpen}
-                    aria-haspopup="menu"
-                    className="sidebar-create-button"
-                    type="button"
-                    onClick={toggleCreateMenu}
-                  >
-                    <span aria-hidden="true">＋</span>
-                    新建
-                  </button>
-                  {renderHeaderCreateMenu()}
-                </div>
+            <div className="sidebar-quick-actions">
+              <div className="create-menu-shell">
+                <button
+                  aria-expanded={isCreateMenuOpen}
+                  aria-haspopup="menu"
+                  className="sidebar-create-button"
+                  type="button"
+                  onClick={toggleCreateMenu}
+                >
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M3 13h2.25L12.5 5.75 10.25 3.5 3 10.75z" />
+                    <path d="M8.75 5l2.25 2.25M3 3.25h4M3 6.25h2" />
+                  </svg>
+                  <span>新建</span>
+                </button>
+                {renderHeaderCreateMenu()}
               </div>
+            </div>
+            <div className="library-title">
+              <span>文章库</span>
             </div>
             <div className="library-scroll">
               {renderCreateForm(
@@ -1498,7 +1522,10 @@ export function App() {
               )}
             </div>
             <div className="sidebar-footer" title={rootPath}>
-              <span className="sidebar-footer-dot" aria-hidden="true" />
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M1.75 4.25h4l1.25 1.5h7.25v7.5H1.75z" />
+                <path d="M1.75 5.75v-3h4l1.25 1.5h6.25v1.5" />
+              </svg>
               <span>{rootPath}</span>
             </div>
           </>
