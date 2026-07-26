@@ -78,7 +78,7 @@ export const themes: Record<ThemeId, WechatTheme> = {
       'display:inline-block;width:10px;height:10px;line-height:10px;border-radius:50%;background-color:#27c93f;color:#27c93f;font-size:10px;margin-right:6px;vertical-align:top;',
     ],
     codeBlockStyle:
-      'overflow-x:auto;padding:16px;color:#abb2bf;padding-top:15px;background:#282c34;border-radius:5px;display:-webkit-box;font-family:Consolas,Monaco,Menlo,monospace;font-size:12px;',
+      'overflow-x:auto;padding:16px;color:#abb2bf;padding-top:15px;background:#282c34;border-radius:5px;display:block;font-family:Consolas,Monaco,Menlo,monospace;font-size:12px;',
   },
   'wechat-tech': {
     id: 'wechat-tech',
@@ -125,7 +125,7 @@ export const themes: Record<ThemeId, WechatTheme> = {
       'display:inline-block;width:10px;height:10px;line-height:10px;border-radius:50%;background-color:#27c93f;color:#27c93f;font-size:10px;margin-right:6px;vertical-align:top;',
     ],
     codeBlockStyle:
-      'overflow-x:auto;padding:20px;color:#1B365D;padding-top:18px;background:#f5f9fc;border:1px solid #dce8ef;border-radius:8px;display:-webkit-box;font-family:"Fira Code",Consolas,Monaco,"Courier New",monospace;font-size:14px;line-height:1.6em;',
+      'overflow-x:auto;padding:20px;color:#1B365D;padding-top:18px;background:#f5f9fc;border:1px solid #dce8ef;border-radius:8px;display:block;font-family:"Fira Code",Consolas,Monaco,"Courier New",monospace;font-size:14px;line-height:1.6em;',
   },
 }
 
