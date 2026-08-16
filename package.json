@@ -2,7 +2,7 @@
   "name": "md2wechat",
   "productName": "md2wechat",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "面向微信公众号写作的 Markdown 桌面排版工具",
   "author": "md2wechat",
   "type": "module",
