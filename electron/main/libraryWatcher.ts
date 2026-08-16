@@ -11,6 +11,7 @@ import type {
 type SnapshotEntry = {
   type: LibraryEntryType
   revision: string | null
+  updatedAt: string | null
 }
 
 type LibrarySnapshot = Map<string, SnapshotEntry>
@@ -243,6 +244,7 @@ async function scanDirectory(
       snapshot.set(childRelativePath, {
         type: 'directory',
         revision: null,
+        updatedAt: null,
       })
       await scanDirectory(
         childAbsolutePath,
@@ -265,6 +267,7 @@ async function scanDirectory(
     snapshot.set(childRelativePath, {
       type: 'article',
       revision: `${childStat.mtimeMs}:${childStat.size}`,
+      updatedAt: childStat.mtime.toISOString(),
     })
   }
 }
@@ -293,6 +296,7 @@ function compareSnapshots(
         type: 'deleted',
         entryType: previousEntry.type,
         path: entryPath,
+        updatedAt: null,
       })
       continue
     }
@@ -302,11 +306,13 @@ function compareSnapshots(
         type: 'deleted',
         entryType: previousEntry.type,
         path: entryPath,
+        updatedAt: null,
       })
       changes.push({
         type: 'created',
         entryType: nextEntry.type,
         path: entryPath,
+        updatedAt: nextEntry.updatedAt,
       })
       continue
     }
@@ -319,6 +325,7 @@ function compareSnapshots(
         type: 'updated',
         entryType: 'article',
         path: entryPath,
+        updatedAt: nextEntry.updatedAt,
       })
     }
   }
@@ -332,6 +339,7 @@ function compareSnapshots(
       type: 'created',
       entryType: nextEntry.type,
       path: entryPath,
+      updatedAt: nextEntry.updatedAt,
     })
   }
 

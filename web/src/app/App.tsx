@@ -22,6 +22,7 @@ import type {
   ArticleTree,
   DesktopErrorCode,
   DirectoryNode,
+  LibraryChange,
   LibraryChangeBatch,
   LibraryOpenResult,
   TreeNode,
@@ -82,6 +83,7 @@ const themeIdStorageKey = 'md2wechat:themeId'
 const libraryCollapsedStorageKey = 'md2wechat:libraryCollapsed'
 const readingUnitsPerMinute = 300
 const diskReloadNoticeDuration = 3200
+const libraryCalibrationDelay = 120
 
 export function App() {
   const [rootPath, setRootPath] = useState<string | null>(null)
@@ -129,6 +131,9 @@ export function App() {
 
   const selectedPathRef = useRef<string | null>(null)
   const rootPathRef = useRef<string | null>(null)
+  const treeRef = useRef<ArticleTree | null>(null)
+  const treeMutationSequenceRef = useRef(0)
+  const treeRefreshSequenceRef = useRef(0)
   const libraryGenerationRef = useRef<number | null>(null)
   const pendingLibraryChangesRef = useRef<
     Map<number, LibraryChangeBatch[]>
@@ -166,6 +171,12 @@ export function App() {
   const libraryPaneClassName = `library-pane${
     isLibraryCollapsed ? ' is-collapsed' : ''
   }`
+
+  const commitTree = useCallback((nextTree: ArticleTree | null) => {
+    treeMutationSequenceRef.current += 1
+    treeRef.current = nextTree
+    setTree(nextTree)
+  }, [])
 
   const loadArticle = useCallback(
     async (
@@ -208,16 +219,34 @@ export function App() {
 
   const refreshTree = useCallback(
     async (expectedGeneration = libraryGenerationRef.current) => {
-      const nextTree = await desktopApi.library.getTree()
+      const refreshSequence = treeRefreshSequenceRef.current + 1
+      treeRefreshSequenceRef.current = refreshSequence
 
-      if (expectedGeneration !== libraryGenerationRef.current) {
-        return null
+      while (
+        expectedGeneration === libraryGenerationRef.current &&
+        refreshSequence === treeRefreshSequenceRef.current
+      ) {
+        const mutationSequence = treeMutationSequenceRef.current
+        const nextTree = await desktopApi.library.getTree()
+
+        if (
+          expectedGeneration !== libraryGenerationRef.current ||
+          refreshSequence !== treeRefreshSequenceRef.current
+        ) {
+          return null
+        }
+
+        if (mutationSequence !== treeMutationSequenceRef.current) {
+          continue
+        }
+
+        commitTree(nextTree)
+        return nextTree
       }
 
-      setTree(nextTree)
-      return nextTree
+      return null
     },
-    [],
+    [commitTree],
   )
 
   const saveCurrentArticle = useCallback((options: SaveOptions = {}) => {
@@ -253,15 +282,16 @@ export function App() {
           mode,
         )
 
-        setTree((currentTree) =>
-          currentTree
-            ? updateArticleUpdatedAt(
-                currentTree,
-                result.path,
-                result.updatedAt,
-              )
-            : currentTree,
-        )
+        const currentTree = treeRef.current
+        if (currentTree) {
+          commitTree(
+            updateArticleUpdatedAt(
+              currentTree,
+              result.path,
+              result.updatedAt,
+            ),
+          )
+        }
         setLastSavedAt(result.updatedAt)
         lastKnownRevisionRef.current = result.revision
         lastSavedMarkdownRef.current = currentMarkdown
@@ -313,7 +343,7 @@ export function App() {
       () => undefined,
     )
     return operation
-  }, [])
+  }, [commitTree])
 
   const resetCurrentArticleState = useCallback(() => {
     selectedPathRef.current = null
@@ -348,7 +378,7 @@ export function App() {
       setLibraryGeneration(openedLibrary.generation)
       setRecentRoots(openedLibrary.recentRoots)
       setBootstrapError(null)
-      setTree(openedLibrary.tree)
+      commitTree(openedLibrary.tree)
       setExpandedDirectories(new Set())
       setCreating(null)
       setCreateName('')
@@ -375,7 +405,7 @@ export function App() {
       )
       await loadArticle(lastArticle.path)
     },
-    [loadArticle, resetCurrentArticleState],
+    [commitTree, loadArticle, resetCurrentArticleState],
   )
 
   const openLibrary = useCallback(
@@ -501,6 +531,57 @@ export function App() {
     [clearCurrentArticle, refreshTree],
   )
 
+  const syncLibraryTree = useCallback(
+    async (batch: LibraryChangeBatch, expectedSelectionIntent: number) => {
+      const isActiveBatch = () =>
+        batch.generation === libraryGenerationRef.current &&
+        batch.rootPath === rootPathRef.current
+      const currentTree = treeRef.current
+      const requiresFullRefresh =
+        batch.needsFullRefresh ||
+        batch.changes.some((change) => change.entryType === 'directory')
+      const nextTree =
+        currentTree && !requiresFullRefresh
+          ? applyArticleChanges(currentTree, batch.changes)
+          : null
+
+      if (!nextTree) {
+        await refreshArticleList(batch.generation, expectedSelectionIntent)
+        return
+      }
+
+      if (!isActiveBatch()) {
+        return
+      }
+
+      commitTree(nextTree)
+
+      if (expectedSelectionIntent !== articleLoadSequenceRef.current) {
+        return
+      }
+
+      const articlePath = selectedPathRef.current
+      if (articlePath && !findArticle(nextTree, articlePath)) {
+        const hasLocalChanges =
+          markdownRef.current !== lastSavedMarkdownRef.current ||
+          saveStateRef.current === 'saving'
+
+        if (hasLocalChanges) {
+          setDiskChangeNotice({ type: 'orphaned' })
+          setSaveState('dirty')
+          setErrorMessage(null)
+        } else {
+          clearCurrentArticle()
+          setErrorMessage('文章不存在')
+        }
+        return
+      }
+
+      setErrorMessage(null)
+    },
+    [clearCurrentArticle, commitTree, refreshArticleList],
+  )
+
   const processLibraryChange = useCallback(
     async (batch: LibraryChangeBatch) => {
       const isActiveBatch = () =>
@@ -513,6 +594,7 @@ export function App() {
 
       const articlePath = selectedPathRef.current
       const selectionIntent = articleLoadSequenceRef.current
+      let activeSelectionIntent = selectionIntent
       const selectedChanges = articlePath
         ? batch.changes.filter(
             (change) =>
@@ -527,12 +609,7 @@ export function App() {
       )
       const shouldCheckSelectedArticle =
         Boolean(articlePath) &&
-        (batch.needsFullRefresh || wasCreatedOrUpdated)
-
-      if (articlePath && wasDeleted && !wasCreatedOrUpdated) {
-        await refreshArticleList(batch.generation, selectionIntent)
-        return
-      }
+        (batch.needsFullRefresh || wasDeleted || wasCreatedOrUpdated)
 
       if (articlePath && shouldCheckSelectedArticle) {
         try {
@@ -558,22 +635,28 @@ export function App() {
             if (articleLoadSequenceRef.current !== selectionIntent) {
               return
             }
+            activeSelectionIntent = selectionIntent + 1
             const loaded = await loadArticle(articlePath, batch.generation)
             if (loaded && isActiveBatch()) {
               setDiskChangeNotice({ type: 'reloaded' })
             }
           }
+
+          if (wasDeleted && !wasCreatedOrUpdated) {
+            await refreshArticleList(batch.generation, activeSelectionIntent)
+            return
+          }
         } catch (error) {
           if (
             !isActiveBatch() ||
             selectedPathRef.current !== articlePath ||
-            articleLoadSequenceRef.current !== selectionIntent
+            articleLoadSequenceRef.current !== activeSelectionIntent
           ) {
             return
           }
 
           if (getErrorCode(error) === 'NOT_FOUND') {
-            await refreshArticleList(batch.generation, selectionIntent)
+            await refreshArticleList(batch.generation, activeSelectionIntent)
             return
           }
 
@@ -582,10 +665,10 @@ export function App() {
       }
 
       if (isActiveBatch()) {
-        await refreshArticleList(batch.generation, selectionIntent)
+        await syncLibraryTree(batch, activeSelectionIntent)
       }
     },
-    [loadArticle, refreshArticleList],
+    [loadArticle, refreshArticleList, syncLibraryTree],
   )
 
   const enqueueLibraryChange = useCallback(
@@ -624,6 +707,21 @@ export function App() {
     [processLibraryChange],
   )
 
+  const requestLibraryCalibration = useCallback(() => {
+    const rootPath = rootPathRef.current
+    const generation = libraryGenerationRef.current
+    if (!rootPath || generation === null) {
+      return
+    }
+
+    enqueueLibraryChange({
+      rootPath,
+      generation,
+      changes: [],
+      needsFullRefresh: true,
+    })
+  }, [enqueueLibraryChange])
+
   useEffect(
     () => desktopApi.library.onDidChange(enqueueLibraryChange),
     [enqueueLibraryChange],
@@ -643,17 +741,17 @@ export function App() {
       }
     }
 
-    enqueueLibraryChange({
-      rootPath,
-      generation: libraryGeneration,
-      changes: [],
-      needsFullRefresh: true,
-    })
+    requestLibraryCalibration()
 
     for (const batch of pendingBatches) {
       enqueueLibraryChange(batch)
     }
-  }, [enqueueLibraryChange, libraryGeneration, rootPath])
+  }, [
+    enqueueLibraryChange,
+    libraryGeneration,
+    requestLibraryCalibration,
+    rootPath,
+  ])
 
   const resetPaneScrollPositions = useCallback(() => {
     syncScrollLockRef.current = false
@@ -703,7 +801,7 @@ export function App() {
         setLibraryGeneration(bootstrapState.generation)
         setRecentRoots(bootstrapState.recentRoots)
         setBootstrapError(bootstrapState.error?.message ?? null)
-        setTree(bootstrapState.tree)
+        commitTree(bootstrapState.tree)
 
         const lastArticlePath = bootstrapState.rootPath
           ? readLastArticlePath(bootstrapState.rootPath)
@@ -742,7 +840,7 @@ export function App() {
     return () => {
       ignore = true
     }
-  }, [loadArticle])
+  }, [commitTree, loadArticle])
 
   useEffect(
     () =>
@@ -834,6 +932,41 @@ export function App() {
   }, [diskChangeNotice])
 
   useEffect(() => {
+    let calibrationTimer: number | null = null
+
+    function scheduleCalibration() {
+      if (document.visibilityState !== 'visible') {
+        return
+      }
+
+      if (calibrationTimer !== null) {
+        window.clearTimeout(calibrationTimer)
+      }
+      calibrationTimer = window.setTimeout(() => {
+        calibrationTimer = null
+        requestLibraryCalibration()
+      }, libraryCalibrationDelay)
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        scheduleCalibration()
+      }
+    }
+
+    window.addEventListener('focus', scheduleCalibration)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.removeEventListener('focus', scheduleCalibration)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      if (calibrationTimer !== null) {
+        window.clearTimeout(calibrationTimer)
+      }
+    }
+  }, [requestLibraryCalibration])
+
+  useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (
         event.key !== 'F5' ||
@@ -847,7 +980,7 @@ export function App() {
       }
 
       event.preventDefault()
-      void refreshArticleList()
+      requestLibraryCalibration()
     }
 
     window.addEventListener('keydown', handleKeyDown)
@@ -855,7 +988,7 @@ export function App() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [refreshArticleList])
+  }, [requestLibraryCalibration])
 
   useEffect(() => {
     if (!openMenu && !isCreateMenuOpen) {
@@ -2385,6 +2518,145 @@ function updateArticleChildrenUpdatedAt(
   })
 
   return [nextChildren, changed]
+}
+
+function applyArticleChanges(
+  tree: ArticleTree,
+  changes: LibraryChange[],
+): ArticleTree | null {
+  let nextTree = tree
+
+  for (const change of changes) {
+    if (change.entryType !== 'article') {
+      return null
+    }
+
+    if (change.type === 'deleted') {
+      nextTree = removeArticleFromTree(nextTree, change.path)
+      continue
+    }
+
+    if (!change.updatedAt) {
+      return null
+    }
+
+    const updatedTree = upsertArticleInTree(
+      nextTree,
+      change.path,
+      change.updatedAt,
+    )
+    if (!updatedTree) {
+      return null
+    }
+    nextTree = updatedTree
+  }
+
+  return nextTree
+}
+
+function upsertArticleInTree(
+  tree: ArticleTree,
+  articlePath: string,
+  updatedAt: string,
+): ArticleTree | null {
+  const parentPath = getParentDirectoryPath(articlePath)
+  const [nextTree, changed] = updateDirectoryChildren(
+    tree,
+    parentPath,
+    (children) => {
+      const article: ArticleNode = {
+        type: 'article',
+        name: getArticleNameFromPath(articlePath),
+        path: articlePath,
+        updatedAt,
+      }
+      return [...children.filter((child) => child.path !== articlePath), article].sort(
+        compareTreeNodes,
+      )
+    },
+  )
+
+  return changed ? nextTree : null
+}
+
+function removeArticleFromTree(
+  tree: ArticleTree,
+  articlePath: string,
+): ArticleTree {
+  const [children, changed] = removeArticleFromChildren(
+    tree.children,
+    articlePath,
+  )
+  return changed ? { ...tree, children } : tree
+}
+
+function removeArticleFromChildren(
+  children: TreeNode[],
+  articlePath: string,
+): [TreeNode[], boolean] {
+  let changed = false
+  const nextChildren: TreeNode[] = []
+
+  for (const child of children) {
+    if (child.type === 'article') {
+      if (child.path === articlePath) {
+        changed = true
+      } else {
+        nextChildren.push(child)
+      }
+      continue
+    }
+
+    const [nestedChildren, nestedChanged] = removeArticleFromChildren(
+      child.children,
+      articlePath,
+    )
+    if (nestedChanged) {
+      changed = true
+      nextChildren.push({ ...child, children: nestedChildren })
+    } else {
+      nextChildren.push(child)
+    }
+  }
+
+  return [changed ? nextChildren : children, changed]
+}
+
+function updateDirectoryChildren<T extends ArticleTree | DirectoryNode>(
+  tree: T,
+  directoryPath: string,
+  updateChildren: (children: TreeNode[]) => TreeNode[],
+): [T, boolean] {
+  if (tree.path === directoryPath) {
+    return [{ ...tree, children: updateChildren(tree.children) }, true]
+  }
+
+  let changed = false
+  const children = tree.children.map((child) => {
+    if (child.type !== 'directory') {
+      return child
+    }
+
+    const [nextChild, childChanged] = updateDirectoryChildren(
+      child,
+      directoryPath,
+      updateChildren,
+    )
+    if (childChanged) {
+      changed = true
+      return nextChild
+    }
+    return child
+  })
+
+  return [changed ? { ...tree, children } : tree, changed]
+}
+
+function compareTreeNodes(left: TreeNode, right: TreeNode) {
+  if (left.type !== right.type) {
+    return left.type === 'directory' ? -1 : 1
+  }
+  return left.name.localeCompare(right.name, 'zh-CN')
 }
 
 function getLastArticleStorageKey(rootPath: string) {

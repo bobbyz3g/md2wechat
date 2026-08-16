@@ -55,6 +55,7 @@ export type LibraryChange = {
   type: 'created' | 'updated' | 'deleted'
   entryType: LibraryEntryType
   path: string
+  updatedAt: string | null
 }
 
 export type LibraryChangeBatch = {
