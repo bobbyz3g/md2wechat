@@ -138,6 +138,7 @@ export type Md2WechatDesktopApi = {
     choose(): Promise<LibraryOpenResult | null>
     open(rootPath: string): Promise<LibraryOpenResult>
     getTree(): Promise<ArticleTree>
+    onDidChange(callback: (batch: LibraryChangeBatch) => void): () => void
   }
   directories: {
     create(parentPath: string, name: string): Promise<DirectoryNode>

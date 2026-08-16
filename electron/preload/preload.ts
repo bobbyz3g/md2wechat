@@ -4,6 +4,7 @@ import {
   IPC_CHANNELS,
   type DesktopApiError,
   type DesktopResult,
+  type LibraryChangeBatch,
   type Md2WechatDesktopApi,
 } from '../shared/types'
 
@@ -46,6 +47,13 @@ const desktopApi: Md2WechatDesktopApi = {
     choose: () => invoke(IPC_CHANNELS.libraryChoose),
     open: (rootPath) => invoke(IPC_CHANNELS.libraryOpen, rootPath),
     getTree: () => invoke(IPC_CHANNELS.libraryGetTree),
+    onDidChange(callback) {
+      const listener = (_event: IpcRendererEvent, batch: LibraryChangeBatch) =>
+        callback(batch)
+      ipcRenderer.on(IPC_CHANNELS.libraryDidChange, listener)
+      return () =>
+        ipcRenderer.removeListener(IPC_CHANNELS.libraryDidChange, listener)
+    },
   },
   directories: {
     create: (parentPath, name) =>

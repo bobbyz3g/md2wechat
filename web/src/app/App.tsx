@@ -22,6 +22,7 @@ import type {
   ArticleTree,
   DesktopErrorCode,
   DirectoryNode,
+  LibraryChangeBatch,
   LibraryOpenResult,
   TreeNode,
 } from '../../../electron/shared/types'
@@ -80,7 +81,6 @@ type SaveOptions = {
 const themeIdStorageKey = 'md2wechat:themeId'
 const libraryCollapsedStorageKey = 'md2wechat:libraryCollapsed'
 const readingUnitsPerMinute = 300
-const articleStatusCheckInterval = 2500
 const diskReloadNoticeDuration = 3200
 
 export function App() {
@@ -92,6 +92,9 @@ export function App() {
   const [isCloseDecisionOpen, setIsCloseDecisionOpen] = useState(false)
   const [isResolvingClose, setIsResolvingClose] = useState(false)
   const [tree, setTree] = useState<ArticleTree | null>(null)
+  const [libraryGeneration, setLibraryGeneration] = useState<number | null>(
+    null,
+  )
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [markdown, setMarkdown] = useState('')
   const [lastSavedMarkdown, setLastSavedMarkdown] = useState('')
@@ -126,6 +129,12 @@ export function App() {
 
   const selectedPathRef = useRef<string | null>(null)
   const rootPathRef = useRef<string | null>(null)
+  const libraryGenerationRef = useRef<number | null>(null)
+  const pendingLibraryChangesRef = useRef<
+    Map<number, LibraryChangeBatch[]>
+  >(new Map())
+  const libraryChangeQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const articleLoadSequenceRef = useRef(0)
   const markdownRef = useRef('')
   const lastSavedMarkdownRef = useRef('')
   const lastKnownRevisionRef = useRef<string | null>(null)
@@ -159,9 +168,21 @@ export function App() {
   }`
 
   const loadArticle = useCallback(
-    async (articlePath: string) => {
+    async (
+      articlePath: string,
+      expectedGeneration = libraryGenerationRef.current,
+    ) => {
+      const loadSequence = articleLoadSequenceRef.current + 1
+      articleLoadSequenceRef.current = loadSequence
       setSaveState('loading')
       const article = await desktopApi.articles.read(articlePath)
+
+      if (
+        expectedGeneration !== libraryGenerationRef.current ||
+        loadSequence !== articleLoadSequenceRef.current
+      ) {
+        return false
+      }
 
       selectedPathRef.current = articlePath
       markdownRef.current = article.content
@@ -180,16 +201,24 @@ export function App() {
       setErrorMessage(null)
       setDiskChangeNotice(null)
       setSaveState('saved')
+      return true
     },
     [],
   )
 
-  const refreshTree = useCallback(async () => {
-    const nextTree = await desktopApi.library.getTree()
+  const refreshTree = useCallback(
+    async (expectedGeneration = libraryGenerationRef.current) => {
+      const nextTree = await desktopApi.library.getTree()
 
-    setTree(nextTree)
-    return nextTree
-  }, [])
+      if (expectedGeneration !== libraryGenerationRef.current) {
+        return null
+      }
+
+      setTree(nextTree)
+      return nextTree
+    },
+    [],
+  )
 
   const saveCurrentArticle = useCallback((options: SaveOptions = {}) => {
     const operation = saveQueueRef.current.then(async () => {
@@ -291,6 +320,7 @@ export function App() {
     markdownRef.current = ''
     lastSavedMarkdownRef.current = ''
     lastKnownRevisionRef.current = null
+    articleLoadSequenceRef.current += 1
 
     setSelectedPath(null)
     setMarkdown('')
@@ -312,8 +342,10 @@ export function App() {
   const activateLibrary = useCallback(
     async (openedLibrary: LibraryOpenResult) => {
       rootPathRef.current = openedLibrary.rootPath
+      libraryGenerationRef.current = openedLibrary.generation
       resetCurrentArticleState()
       setRootPath(openedLibrary.rootPath)
+      setLibraryGeneration(openedLibrary.generation)
       setRecentRoots(openedLibrary.recentRoots)
       setBootstrapError(null)
       setTree(openedLibrary.tree)
@@ -398,6 +430,9 @@ export function App() {
   const refreshAfterMissingArticle = useCallback(
     async (articlePath: string) => {
       const nextTree = await refreshTree()
+      if (!nextTree) {
+        return
+      }
       if (
         selectedPathRef.current === articlePath &&
         !findArticle(nextTree, articlePath)
@@ -420,36 +455,205 @@ export function App() {
     [clearCurrentArticle, refreshTree],
   )
 
-  const refreshArticleList = useCallback(async () => {
-    if (!rootPathRef.current) {
-      return
-    }
-
-    try {
-      const nextTree = await refreshTree()
-      const articlePath = selectedPathRef.current
-
-      if (articlePath && !findArticle(nextTree, articlePath)) {
-        const hasLocalChanges =
-          markdownRef.current !== lastSavedMarkdownRef.current ||
-          saveStateRef.current === 'saving'
-
-        if (hasLocalChanges) {
-          setDiskChangeNotice({ type: 'orphaned' })
-          setSaveState('dirty')
-          setErrorMessage(null)
-        } else {
-          clearCurrentArticle()
-          setErrorMessage('文章不存在')
-        }
+  const refreshArticleList = useCallback(
+    async (
+      expectedGeneration = libraryGenerationRef.current,
+      expectedSelectionIntent?: number,
+    ) => {
+      if (!rootPathRef.current) {
         return
       }
 
-      setErrorMessage(null)
-    } catch (error) {
-      setErrorMessage(getErrorMessage(error))
+      try {
+        const nextTree = await refreshTree(expectedGeneration)
+        if (
+          !nextTree ||
+          (expectedSelectionIntent !== undefined &&
+            expectedSelectionIntent !== articleLoadSequenceRef.current)
+        ) {
+          return
+        }
+        const articlePath = selectedPathRef.current
+
+        if (articlePath && !findArticle(nextTree, articlePath)) {
+          const hasLocalChanges =
+            markdownRef.current !== lastSavedMarkdownRef.current ||
+            saveStateRef.current === 'saving'
+
+          if (hasLocalChanges) {
+            setDiskChangeNotice({ type: 'orphaned' })
+            setSaveState('dirty')
+            setErrorMessage(null)
+          } else {
+            clearCurrentArticle()
+            setErrorMessage('文章不存在')
+          }
+          return
+        }
+
+        setErrorMessage(null)
+      } catch (error) {
+        if (expectedGeneration === libraryGenerationRef.current) {
+          setErrorMessage(getErrorMessage(error))
+        }
+      }
+    },
+    [clearCurrentArticle, refreshTree],
+  )
+
+  const processLibraryChange = useCallback(
+    async (batch: LibraryChangeBatch) => {
+      const isActiveBatch = () =>
+        batch.generation === libraryGenerationRef.current &&
+        batch.rootPath === rootPathRef.current
+
+      if (!isActiveBatch()) {
+        return
+      }
+
+      const articlePath = selectedPathRef.current
+      const selectionIntent = articleLoadSequenceRef.current
+      const selectedChanges = articlePath
+        ? batch.changes.filter(
+            (change) =>
+              change.entryType === 'article' && change.path === articlePath,
+          )
+        : []
+      const wasDeleted = selectedChanges.some(
+        (change) => change.type === 'deleted',
+      )
+      const wasCreatedOrUpdated = selectedChanges.some(
+        (change) => change.type === 'created' || change.type === 'updated',
+      )
+      const shouldCheckSelectedArticle =
+        Boolean(articlePath) &&
+        (batch.needsFullRefresh || wasCreatedOrUpdated)
+
+      if (articlePath && wasDeleted && !wasCreatedOrUpdated) {
+        await refreshArticleList(batch.generation, selectionIntent)
+        return
+      }
+
+      if (articlePath && shouldCheckSelectedArticle) {
+        try {
+          const status = await desktopApi.articles.getStatus(articlePath)
+          if (
+            !isActiveBatch() ||
+            selectedPathRef.current !== articlePath ||
+            articleLoadSequenceRef.current !== selectionIntent
+          ) {
+            return
+          }
+
+          const hasLocalChanges =
+            markdownRef.current !== lastSavedMarkdownRef.current ||
+            saveStateRef.current === 'saving'
+          const hasNewRevision =
+            status.revision !== lastKnownRevisionRef.current ||
+            selectedChanges.some((change) => change.type === 'created')
+
+          if (hasNewRevision && hasLocalChanges) {
+            setDiskChangeNotice({ type: 'conflict', status })
+          } else if (hasNewRevision) {
+            if (articleLoadSequenceRef.current !== selectionIntent) {
+              return
+            }
+            const loaded = await loadArticle(articlePath, batch.generation)
+            if (loaded && isActiveBatch()) {
+              setDiskChangeNotice({ type: 'reloaded' })
+            }
+          }
+        } catch (error) {
+          if (
+            !isActiveBatch() ||
+            selectedPathRef.current !== articlePath ||
+            articleLoadSequenceRef.current !== selectionIntent
+          ) {
+            return
+          }
+
+          if (getErrorCode(error) === 'NOT_FOUND') {
+            await refreshArticleList(batch.generation, selectionIntent)
+            return
+          }
+
+          setErrorMessage(getErrorMessage(error))
+        }
+      }
+
+      if (isActiveBatch()) {
+        await refreshArticleList(batch.generation, selectionIntent)
+      }
+    },
+    [loadArticle, refreshArticleList],
+  )
+
+  const enqueueLibraryChange = useCallback(
+    (batch: LibraryChangeBatch) => {
+      const activeGeneration = libraryGenerationRef.current
+      const activeRootPath = rootPathRef.current
+
+      if (activeGeneration !== null && batch.generation < activeGeneration) {
+        return
+      }
+
+      if (activeGeneration === null || batch.generation > activeGeneration) {
+        const pendingBatches =
+          pendingLibraryChangesRef.current.get(batch.generation) ?? []
+        pendingBatches.push(batch)
+        pendingLibraryChangesRef.current.set(
+          batch.generation,
+          pendingBatches,
+        )
+        return
+      }
+
+      if (batch.rootPath !== activeRootPath) {
+        return
+      }
+
+      const operation = libraryChangeQueueRef.current.then(() =>
+        processLibraryChange(batch),
+      )
+      libraryChangeQueueRef.current = operation.catch((error: unknown) => {
+        if (batch.generation === libraryGenerationRef.current) {
+          setErrorMessage(getErrorMessage(error))
+        }
+      })
+    },
+    [processLibraryChange],
+  )
+
+  useEffect(
+    () => desktopApi.library.onDidChange(enqueueLibraryChange),
+    [enqueueLibraryChange],
+  )
+
+  useEffect(() => {
+    if (libraryGeneration === null || !rootPath) {
+      return
     }
-  }, [clearCurrentArticle, refreshTree])
+
+    const pendingBatches =
+      pendingLibraryChangesRef.current.get(libraryGeneration) ?? []
+
+    for (const generation of pendingLibraryChangesRef.current.keys()) {
+      if (generation <= libraryGeneration) {
+        pendingLibraryChangesRef.current.delete(generation)
+      }
+    }
+
+    enqueueLibraryChange({
+      rootPath,
+      generation: libraryGeneration,
+      changes: [],
+      needsFullRefresh: true,
+    })
+
+    for (const batch of pendingBatches) {
+      enqueueLibraryChange(batch)
+    }
+  }, [enqueueLibraryChange, libraryGeneration, rootPath])
 
   const resetPaneScrollPositions = useCallback(() => {
     syncScrollLockRef.current = false
@@ -494,7 +698,9 @@ export function App() {
         }
 
         rootPathRef.current = bootstrapState.rootPath
+        libraryGenerationRef.current = bootstrapState.generation
         setRootPath(bootstrapState.rootPath)
+        setLibraryGeneration(bootstrapState.generation)
         setRecentRoots(bootstrapState.recentRoots)
         setBootstrapError(bootstrapState.error?.message ?? null)
         setTree(bootstrapState.tree)
@@ -610,88 +816,6 @@ export function App() {
   useEffect(() => {
     saveStateRef.current = saveState
   }, [saveState])
-
-  useEffect(() => {
-    if (!selectedPath) {
-      return
-    }
-
-    let ignore = false
-
-    async function checkArticleStatus() {
-      const articlePath = selectedPathRef.current
-
-      if (!articlePath) {
-        return
-      }
-
-      try {
-        const status = await desktopApi.articles.getStatus(articlePath)
-
-        if (ignore || selectedPathRef.current !== status.path) {
-          return
-        }
-
-        const knownRevision = lastKnownRevisionRef.current
-
-        if (!knownRevision) {
-          lastKnownRevisionRef.current = status.revision
-          setLastSavedAt(status.updatedAt)
-          return
-        }
-
-        if (status.revision === knownRevision) {
-          return
-        }
-
-        const hasLocalChanges =
-          markdownRef.current !== lastSavedMarkdownRef.current ||
-          saveStateRef.current === 'saving'
-
-        if (hasLocalChanges) {
-          setDiskChangeNotice({
-            type: 'conflict',
-            status,
-          })
-          return
-        }
-
-        await loadArticle(status.path)
-
-        if (ignore) {
-          return
-        }
-
-        await refreshTree()
-
-        if (!ignore) {
-          setDiskChangeNotice({ type: 'reloaded' })
-        }
-      } catch (error) {
-        if (!ignore) {
-          if (getErrorCode(error) === 'NOT_FOUND') {
-            await refreshAfterMissingArticle(articlePath)
-          } else {
-            setErrorMessage(getErrorMessage(error))
-          }
-        }
-      }
-    }
-
-    const timer = window.setInterval(() => {
-      void checkArticleStatus()
-    }, articleStatusCheckInterval)
-
-    return () => {
-      ignore = true
-      window.clearInterval(timer)
-    }
-  }, [
-    loadArticle,
-    refreshAfterMissingArticle,
-    refreshTree,
-    selectedPath,
-  ])
 
   useEffect(() => {
     if (diskChangeNotice?.type !== 'reloaded') {
@@ -896,11 +1020,15 @@ export function App() {
       return
     }
 
-    let latestTree: ArticleTree
+    let latestTree: ArticleTree | null
     try {
       latestTree = await refreshTree()
     } catch (error) {
       setErrorMessage(getErrorMessage(error))
+      return
+    }
+
+    if (!latestTree) {
       return
     }
 
@@ -937,6 +1065,7 @@ export function App() {
       return
     }
 
+    articleLoadSequenceRef.current += 1
     setSwitchingPath(articlePath)
 
     const saved = await saveCurrentArticle()
@@ -1266,6 +1395,7 @@ export function App() {
           return
         }
 
+        articleLoadSequenceRef.current += 1
         expandDirectory(creating.directoryPath)
         const article = await desktopApi.articles.create(
           creating.directoryPath,
