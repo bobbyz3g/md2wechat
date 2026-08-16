@@ -4,12 +4,14 @@ import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 
 import { AppError, ArticleStore } from './articleStore'
 import type { ConfigStore } from './configStore'
+import { LibraryWatcher } from './libraryWatcher'
 import {
   IPC_CHANNELS,
   type BootstrapState,
   type CloseResolution,
   type DesktopError,
   type DesktopResult,
+  type LibraryChangeBatch,
   type LibraryOpenResult,
 } from '../shared/types'
 
@@ -27,6 +29,10 @@ export function registerIpcHandlers({
   onResolveClose,
 }: RegisterIpcHandlersOptions) {
   let articleStore: ArticleStore | null = null
+  let libraryWatcher: LibraryWatcher | null = null
+  let libraryGeneration = 0
+  let isDisposed = false
+  let openLibraryQueue: Promise<void> = Promise.resolve()
   const registeredChannels: string[] = []
 
   const registerHandler = <T>(
@@ -56,17 +62,78 @@ export function registerIpcHandlers({
     return articleStore
   }
 
-  const openLibrary = async (rootPath: string): Promise<LibraryOpenResult> => {
+  const sendLibraryChange = (batch: LibraryChangeBatch) => {
+    setImmediate(() => {
+      if (isDisposed || batch.generation !== libraryGeneration) {
+        return
+      }
+
+      const window = getWindow()
+      if (!window || window.isDestroyed()) {
+        return
+      }
+
+      window.webContents.send(IPC_CHANNELS.libraryDidChange, batch)
+    })
+  }
+
+  const doOpenLibrary = async (
+    rootPath: string,
+  ): Promise<LibraryOpenResult> => {
     const nextStore = await ArticleStore.open(rootPath)
-    const tree = await nextStore.getTree()
-    await configStore.setActiveRoot(nextStore.rootPath)
+    const nextGeneration = libraryGeneration + 1
+    let isCommitted = false
+    const nextWatcher = await startLibraryWatcher(
+      nextStore.rootPath,
+      nextGeneration,
+      (batch) => {
+        if (isCommitted) {
+          sendLibraryChange(batch)
+        }
+      },
+    )
+
+    let tree
+    try {
+      tree = await nextStore.getTree()
+      await configStore.setActiveRoot(nextStore.rootPath)
+    } catch (error) {
+      nextWatcher?.dispose()
+      throw error
+    }
+
+    if (isDisposed) {
+      nextWatcher?.dispose()
+      throw new AppError('IO_ERROR', '应用正在退出')
+    }
+
+    libraryWatcher?.dispose()
     articleStore = nextStore
+    libraryWatcher = nextWatcher
+    libraryGeneration = nextGeneration
+    isCommitted = true
     onLibraryChanged()
+    sendLibraryChange({
+      rootPath: nextStore.rootPath,
+      generation: nextGeneration,
+      changes: [],
+      needsFullRefresh: true,
+    })
     return {
       rootPath: nextStore.rootPath,
+      generation: nextGeneration,
       recentRoots: configStore.getState().recentRoots,
       tree,
     }
+  }
+
+  const openLibrary = (rootPath: string): Promise<LibraryOpenResult> => {
+    const operation = openLibraryQueue.then(() => doOpenLibrary(rootPath))
+    openLibraryQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return operation
   }
 
   registerHandler<BootstrapState>(IPC_CHANNELS.appGetBootstrapState, async () => {
@@ -74,6 +141,7 @@ export function registerIpcHandlers({
     if (!state.lastRoot) {
       return {
         rootPath: null,
+        generation: null,
         recentRoots: state.recentRoots,
         tree: null,
         error: null,
@@ -94,6 +162,7 @@ export function registerIpcHandlers({
       )
       return {
         rootPath: null,
+        generation: null,
         recentRoots: configStore.getState().recentRoots,
         tree: null,
         error: toDesktopError(error),
@@ -210,9 +279,27 @@ export function registerIpcHandlers({
   )
 
   return () => {
+    isDisposed = true
+    libraryGeneration += 1
+    libraryWatcher?.dispose()
+    libraryWatcher = null
+
     for (const channel of registeredChannels) {
       ipcMain.removeHandler(channel)
     }
+  }
+}
+
+async function startLibraryWatcher(
+  rootPath: string,
+  generation: number,
+  onDidChange: (batch: LibraryChangeBatch) => void,
+) {
+  try {
+    return await LibraryWatcher.start(rootPath, generation, onDidChange)
+  } catch (error) {
+    console.error('启动文章库监听失败', error)
+    return null
   }
 }
 

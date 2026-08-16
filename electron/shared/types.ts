@@ -44,12 +44,29 @@ export type DesktopResult<T> =
 
 export type LibraryOpenResult = {
   rootPath: string
+  generation: number
   recentRoots: string[]
   tree: ArticleTree
 }
 
+export type LibraryEntryType = 'directory' | 'article'
+
+export type LibraryChange = {
+  type: 'created' | 'updated' | 'deleted'
+  entryType: LibraryEntryType
+  path: string
+}
+
+export type LibraryChangeBatch = {
+  rootPath: string
+  generation: number
+  changes: LibraryChange[]
+  needsFullRefresh: boolean
+}
+
 export type BootstrapState = {
   rootPath: string | null
+  generation: number | null
   recentRoots: string[]
   tree: ArticleTree | null
   error: DesktopError | null
@@ -96,6 +113,7 @@ export const IPC_CHANNELS = {
   libraryChoose: 'library:choose',
   libraryOpen: 'library:open',
   libraryGetTree: 'library:get-tree',
+  libraryDidChange: 'library:did-change',
   directoriesCreate: 'directories:create',
   directoriesRename: 'directories:rename',
   directoriesDelete: 'directories:delete',
