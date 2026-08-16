@@ -187,11 +187,15 @@ export function registerIpcHandlers({
       requireString(articlePath, '文章路径不合法'),
     ),
   )
-  registerHandler(IPC_CHANNELS.articlesSave, (articlePath, content) =>
-    getArticleStore().saveArticle(
-      requireString(articlePath, '文章路径不合法'),
-      requireString(content, '文章内容必须是字符串'),
-    ),
+  registerHandler(
+    IPC_CHANNELS.articlesSave,
+    (articlePath, content, expectedRevision, mode) =>
+      getArticleStore().saveArticle(
+        requireString(articlePath, '文章路径不合法'),
+        requireString(content, '文章内容必须是字符串'),
+        requireString(expectedRevision, '文章版本不合法'),
+        requireArticleSaveMode(mode),
+      ),
   )
   registerHandler(IPC_CHANNELS.articlesRename, (articlePath, name) =>
     getArticleStore().renameArticle(
@@ -235,6 +239,13 @@ function toDesktopError(error: unknown): DesktopError {
 function requireString(value: unknown, message: string) {
   if (typeof value !== 'string') {
     throw new AppError('INVALID_PATH', message)
+  }
+  return value
+}
+
+function requireArticleSaveMode(value: unknown) {
+  if (value !== 'normal' && value !== 'overwrite' && value !== 'create') {
+    throw new AppError('INVALID_PATH', '保存模式不合法')
   }
   return value
 }

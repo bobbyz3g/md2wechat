@@ -17,7 +17,10 @@ import { desktopApi } from '../desktop/api'
 import { WelcomeScreen } from './WelcomeScreen'
 import type {
   ArticleNode,
+  ArticleSaveMode,
+  ArticleStatus,
   ArticleTree,
+  DesktopErrorCode,
   DirectoryNode,
   LibraryOpenResult,
   TreeNode,
@@ -35,6 +38,7 @@ type CreateTarget =
   | {
       type: 'article'
       directoryPath: string
+      preserveCurrentContent: boolean
     }
 
 type ArticleStats = {
@@ -63,8 +67,15 @@ type DiskChangeNotice =
     }
   | {
       type: 'conflict'
-      updatedAt: string
+      status: ArticleStatus
     }
+  | {
+      type: 'orphaned'
+    }
+
+type SaveOptions = {
+  mode?: ArticleSaveMode
+}
 
 const themeIdStorageKey = 'md2wechat:themeId'
 const libraryCollapsedStorageKey = 'md2wechat:libraryCollapsed'
@@ -117,8 +128,9 @@ export function App() {
   const rootPathRef = useRef<string | null>(null)
   const markdownRef = useRef('')
   const lastSavedMarkdownRef = useRef('')
-  const lastKnownUpdatedAtRef = useRef<string | null>(null)
+  const lastKnownRevisionRef = useRef<string | null>(null)
   const saveStateRef = useRef<SaveState>('loading')
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
   const editorScrollRef = useRef<HTMLTextAreaElement | null>(null)
   const previewScrollRef = useRef<HTMLElement | null>(null)
   const syncScrollLockRef = useRef(false)
@@ -147,14 +159,14 @@ export function App() {
   }`
 
   const loadArticle = useCallback(
-    async (articlePath: string, articleUpdatedAt?: string) => {
+    async (articlePath: string) => {
       setSaveState('loading')
       const article = await desktopApi.articles.read(articlePath)
 
       selectedPathRef.current = articlePath
       markdownRef.current = article.content
       lastSavedMarkdownRef.current = article.content
-      lastKnownUpdatedAtRef.current = articleUpdatedAt ?? null
+      lastKnownRevisionRef.current = article.revision
 
       const activeRootPath = rootPathRef.current
       if (activeRootPath) {
@@ -163,7 +175,7 @@ export function App() {
       setSelectedPath(articlePath)
       setMarkdown(article.content)
       setLastSavedMarkdown(article.content)
-      setLastSavedAt(articleUpdatedAt ?? null)
+      setLastSavedAt(article.updatedAt)
       setCopyState('idle')
       setErrorMessage(null)
       setDiskChangeNotice(null)
@@ -179,58 +191,106 @@ export function App() {
     return nextTree
   }, [])
 
-  const saveCurrentArticle = useCallback(async () => {
-    const articlePath = selectedPathRef.current
-    const currentMarkdown = markdownRef.current
-    const savedMarkdown = lastSavedMarkdownRef.current
+  const saveCurrentArticle = useCallback((options: SaveOptions = {}) => {
+    const operation = saveQueueRef.current.then(async () => {
+      const articlePath = selectedPathRef.current
+      const currentMarkdown = markdownRef.current
+      const savedMarkdown = lastSavedMarkdownRef.current
+      const expectedRevision = lastKnownRevisionRef.current
 
-    if (!articlePath || currentMarkdown === savedMarkdown) {
-      if (articlePath) {
-        setSaveState('saved')
+      const mode = options.mode ?? 'normal'
+
+      if (!articlePath || (currentMarkdown === savedMarkdown && mode === 'normal')) {
+        if (articlePath) {
+          setSaveState('saved')
+        }
+
+        return true
       }
 
-      return true
-    }
+      if (!expectedRevision && mode === 'normal') {
+        setSaveState('failed')
+        setErrorMessage('文章版本不可用，请重新载入')
+        return false
+      }
 
-    setSaveState('saving')
+      setSaveState('saving')
 
-    try {
-      const result = await desktopApi.articles.save(
-        articlePath,
-        currentMarkdown,
-      )
+      try {
+        const result = await desktopApi.articles.save(
+          articlePath,
+          currentMarkdown,
+          expectedRevision ?? '',
+          mode,
+        )
 
-      setTree((currentTree) =>
-        currentTree
-          ? updateArticleUpdatedAt(
-              currentTree,
-              result.path,
-              result.updatedAt,
-            )
-          : currentTree,
-      )
-      setLastSavedAt(result.updatedAt)
-      lastKnownUpdatedAtRef.current = result.updatedAt
-      lastSavedMarkdownRef.current = currentMarkdown
-      setLastSavedMarkdown(currentMarkdown)
-      setDiskChangeNotice(null)
-      setSaveState(
-        markdownRef.current === currentMarkdown ? 'saved' : 'dirty',
-      )
-      setErrorMessage(null)
-      return true
-    } catch (error) {
-      setSaveState('failed')
-      setErrorMessage(getErrorMessage(error))
-      return false
-    }
+        setTree((currentTree) =>
+          currentTree
+            ? updateArticleUpdatedAt(
+                currentTree,
+                result.path,
+                result.updatedAt,
+              )
+            : currentTree,
+        )
+        setLastSavedAt(result.updatedAt)
+        lastKnownRevisionRef.current = result.revision
+        lastSavedMarkdownRef.current = currentMarkdown
+        setLastSavedMarkdown(currentMarkdown)
+        setDiskChangeNotice(null)
+        setSaveState(
+          markdownRef.current === currentMarkdown ? 'saved' : 'dirty',
+        )
+        setErrorMessage(null)
+        return true
+      } catch (error) {
+        const code = getErrorCode(error)
+        const message = getErrorMessage(error)
+
+        if (code === 'CONFLICT') {
+          try {
+            const status = await desktopApi.articles.getStatus(articlePath)
+            setDiskChangeNotice({ type: 'conflict', status })
+            setSaveState('dirty')
+            setErrorMessage(null)
+          } catch (statusError) {
+            if (getErrorCode(statusError) === 'NOT_FOUND') {
+              setDiskChangeNotice({ type: 'orphaned' })
+              setSaveState('dirty')
+              setErrorMessage(null)
+            } else {
+              setSaveState('failed')
+              setErrorMessage(getErrorMessage(statusError))
+            }
+          }
+          return false
+        }
+
+        if (code === 'NOT_FOUND') {
+          setDiskChangeNotice({ type: 'orphaned' })
+          setSaveState('dirty')
+          setErrorMessage(null)
+          return false
+        }
+
+        setSaveState('failed')
+        setErrorMessage(message)
+        return false
+      }
+    })
+
+    saveQueueRef.current = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return operation
   }, [])
 
   const resetCurrentArticleState = useCallback(() => {
     selectedPathRef.current = null
     markdownRef.current = ''
     lastSavedMarkdownRef.current = ''
-    lastKnownUpdatedAtRef.current = null
+    lastKnownRevisionRef.current = null
 
     setSelectedPath(null)
     setMarkdown('')
@@ -281,7 +341,7 @@ export function App() {
       setExpandedDirectories(
         new Set(getParentDirectoryPaths(lastArticle.path)),
       )
-      await loadArticle(lastArticle.path, lastArticle.updatedAt)
+      await loadArticle(lastArticle.path)
     },
     [loadArticle, resetCurrentArticleState],
   )
@@ -342,12 +402,54 @@ export function App() {
         selectedPathRef.current === articlePath &&
         !findArticle(nextTree, articlePath)
       ) {
+        const hasLocalChanges =
+          markdownRef.current !== lastSavedMarkdownRef.current ||
+          saveStateRef.current === 'saving'
+
+        if (hasLocalChanges) {
+          setDiskChangeNotice({ type: 'orphaned' })
+          setSaveState('dirty')
+          setErrorMessage(null)
+          return
+        }
+
         clearCurrentArticle()
       }
       setErrorMessage('文章不存在')
     },
     [clearCurrentArticle, refreshTree],
   )
+
+  const refreshArticleList = useCallback(async () => {
+    if (!rootPathRef.current) {
+      return
+    }
+
+    try {
+      const nextTree = await refreshTree()
+      const articlePath = selectedPathRef.current
+
+      if (articlePath && !findArticle(nextTree, articlePath)) {
+        const hasLocalChanges =
+          markdownRef.current !== lastSavedMarkdownRef.current ||
+          saveStateRef.current === 'saving'
+
+        if (hasLocalChanges) {
+          setDiskChangeNotice({ type: 'orphaned' })
+          setSaveState('dirty')
+          setErrorMessage(null)
+        } else {
+          clearCurrentArticle()
+          setErrorMessage('文章不存在')
+        }
+        return
+      }
+
+      setErrorMessage(null)
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error))
+    }
+  }, [clearCurrentArticle, refreshTree])
 
   const resetPaneScrollPositions = useCallback(() => {
     syncScrollLockRef.current = false
@@ -408,7 +510,7 @@ export function App() {
           setExpandedDirectories(
             new Set(getParentDirectoryPaths(lastArticle.path)),
           )
-          await loadArticle(lastArticle.path, lastArticle.updatedAt)
+          await loadArticle(lastArticle.path)
         } else {
           if (bootstrapState.rootPath) {
             clearLastArticlePath(bootstrapState.rootPath)
@@ -484,7 +586,8 @@ export function App() {
     if (
       !selectedPath ||
       markdown === lastSavedMarkdown ||
-      diskChangeNotice?.type === 'conflict'
+      (diskChangeNotice?.type === 'conflict' ||
+        diskChangeNotice?.type === 'orphaned')
     ) {
       return
     }
@@ -529,15 +632,15 @@ export function App() {
           return
         }
 
-        const knownUpdatedAt = lastKnownUpdatedAtRef.current
+        const knownRevision = lastKnownRevisionRef.current
 
-        if (!knownUpdatedAt) {
-          lastKnownUpdatedAtRef.current = status.updatedAt
+        if (!knownRevision) {
+          lastKnownRevisionRef.current = status.revision
           setLastSavedAt(status.updatedAt)
           return
         }
 
-        if (status.updatedAt === knownUpdatedAt) {
+        if (status.revision === knownRevision) {
           return
         }
 
@@ -548,12 +651,12 @@ export function App() {
         if (hasLocalChanges) {
           setDiskChangeNotice({
             type: 'conflict',
-            updatedAt: status.updatedAt,
+            status,
           })
           return
         }
 
-        await loadArticle(status.path, status.updatedAt)
+        await loadArticle(status.path)
 
         if (ignore) {
           return
@@ -566,11 +669,10 @@ export function App() {
         }
       } catch (error) {
         if (!ignore) {
-          const message = getErrorMessage(error)
-          if (message === '文章不存在') {
+          if (getErrorCode(error) === 'NOT_FOUND') {
             await refreshAfterMissingArticle(articlePath)
           } else {
-            setErrorMessage(message)
+            setErrorMessage(getErrorMessage(error))
           }
         }
       }
@@ -606,6 +708,30 @@ export function App() {
       window.clearTimeout(timer)
     }
   }, [diskChangeNotice])
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (
+        event.key !== 'F5' ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.repeat
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      void refreshArticleList()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [refreshArticleList])
 
   useEffect(() => {
     if (!openMenu && !isCreateMenuOpen) {
@@ -736,7 +862,7 @@ export function App() {
     setCopyState('idle')
   }
 
-  async function handleReloadChangedArticle(updatedAt: string) {
+  async function handleReloadChangedArticle() {
     const articlePath = selectedPathRef.current
 
     if (!articlePath) {
@@ -744,22 +870,66 @@ export function App() {
     }
 
     try {
-      await loadArticle(articlePath, updatedAt)
+      await loadArticle(articlePath)
       await refreshTree()
       setDiskChangeNotice({ type: 'reloaded' })
     } catch (error) {
-      const message = getErrorMessage(error)
-      if (message === '文章不存在') {
+      if (getErrorCode(error) === 'NOT_FOUND') {
         await refreshAfterMissingArticle(articlePath)
       } else {
-        setErrorMessage(message)
+        setErrorMessage(getErrorMessage(error))
       }
     }
   }
 
-  function handleKeepCurrentArticle(updatedAt: string) {
-    lastKnownUpdatedAtRef.current = updatedAt
-    setDiskChangeNotice(null)
+  async function handleResolveDiskChange(mode: 'overwrite' | 'create') {
+    const saved = await saveCurrentArticle({ mode })
+
+    if (saved) {
+      await refreshTree()
+    }
+  }
+
+  async function handleSaveOrphanedArticleAs() {
+    const articlePath = selectedPathRef.current
+    if (!articlePath) {
+      return
+    }
+
+    let latestTree: ArticleTree
+    try {
+      latestTree = await refreshTree()
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error))
+      return
+    }
+
+    const originalDirectoryPath = getParentDirectoryPath(articlePath)
+    const directoryPath =
+      findDirectory(latestTree, originalDirectoryPath)
+        ? originalDirectoryPath
+        : ''
+    const articleName = getArticleNameFromPath(articlePath)
+
+    writeLibraryCollapsed(false)
+    setIsLibraryCollapsed(false)
+    expandDirectory(directoryPath)
+    setCreating({
+      type: 'article',
+      directoryPath,
+      preserveCurrentContent: true,
+    })
+    setCreateName(`${articleName} 副本`)
+    setErrorMessage(null)
+  }
+
+  function handleDiscardOrphanedArticle() {
+    if (!window.confirm('确定放弃当前保留的编辑内容吗？')) {
+      return
+    }
+
+    clearCurrentArticle()
+    void refreshArticleList()
   }
 
   async function handleSelectArticle(articlePath: string) {
@@ -777,16 +947,13 @@ export function App() {
     }
 
     try {
-      const article = tree ? findArticle(tree, articlePath) : null
-
-      await loadArticle(articlePath, article?.updatedAt)
+      await loadArticle(articlePath)
     } catch (error) {
       setSaveState('failed')
-      const message = getErrorMessage(error)
-      if (message === '文章不存在') {
+      if (getErrorCode(error) === 'NOT_FOUND') {
         await refreshAfterMissingArticle(articlePath)
       } else {
-        setErrorMessage(message)
+        setErrorMessage(getErrorMessage(error))
       }
     } finally {
       setSwitchingPath(null)
@@ -857,6 +1024,7 @@ export function App() {
     setCreating({
       type: 'article',
       directoryPath,
+      preserveCurrentContent: false,
     })
     setCreateName('')
     setErrorMessage(null)
@@ -934,7 +1102,6 @@ export function App() {
 
         syncSelectedPathAfterRename('article', result.oldPath, result.path)
         if (selectedPathRef.current === result.path) {
-          lastKnownUpdatedAtRef.current = result.updatedAt
           setLastSavedAt(result.updatedAt)
         }
       }
@@ -1091,7 +1258,9 @@ export function App() {
         await desktopApi.directories.create(creating.parentPath, name)
         await refreshTree()
       } else {
-        const saved = await saveCurrentArticle()
+        const saved = creating.preserveCurrentContent
+          ? true
+          : await saveCurrentArticle()
 
         if (!saved) {
           return
@@ -1101,11 +1270,13 @@ export function App() {
         const article = await desktopApi.articles.create(
           creating.directoryPath,
           name,
-          `# ${name}\n\n`,
+          creating.preserveCurrentContent
+            ? markdownRef.current
+            : `# ${name}\n\n`,
         )
 
         await refreshTree()
-        await loadArticle(article.path, article.updatedAt)
+        await loadArticle(article.path)
       }
 
       setCreating(null)
@@ -1586,20 +1757,44 @@ export function App() {
                   <button
                     className="small-button primary"
                     type="button"
-                    onClick={() =>
-                      void handleReloadChangedArticle(diskChangeNotice.updatedAt)
-                    }
+                    onClick={() => void handleReloadChangedArticle()}
                   >
                     重新载入
                   </button>
                   <button
                     className="small-button"
                     type="button"
-                    onClick={() =>
-                      handleKeepCurrentArticle(diskChangeNotice.updatedAt)
-                    }
+                    onClick={() => void handleResolveDiskChange('overwrite')}
                   >
-                    保留当前
+                    覆盖磁盘
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {diskChangeNotice?.type === 'orphaned' ? (
+              <div className="disk-change-banner" role="alert">
+                <span>磁盘文件已删除，当前编辑内容已保留</span>
+                <div className="disk-change-actions">
+                  <button
+                    className="small-button primary"
+                    type="button"
+                    onClick={() => void handleResolveDiskChange('create')}
+                  >
+                    重新创建
+                  </button>
+                  <button
+                    className="small-button"
+                    type="button"
+                    onClick={() => void handleSaveOrphanedArticleAs()}
+                  >
+                    另存为
+                  </button>
+                  <button
+                    className="small-button"
+                    type="button"
+                    onClick={handleDiscardOrphanedArticle}
+                  >
+                    放弃当前
                   </button>
                 </div>
               </div>
@@ -1921,7 +2116,49 @@ function getErrorMessage(error: unknown) {
     return error.message
   }
 
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof error.message === 'string'
+  ) {
+    return error.message
+  }
+
   return '操作失败'
+}
+
+function getErrorCode(error: unknown): DesktopErrorCode | null {
+  if (
+    typeof error !== 'object' ||
+    error === null ||
+    !('code' in error) ||
+    !isDesktopErrorCode(error.code)
+  ) {
+    return null
+  }
+
+  return error.code
+}
+
+function isDesktopErrorCode(value: unknown): value is DesktopErrorCode {
+  return (
+    value === 'INVALID_PATH' ||
+    value === 'NOT_FOUND' ||
+    value === 'CONFLICT' ||
+    value === 'PERMISSION_DENIED' ||
+    value === 'IO_ERROR'
+  )
+}
+
+function getParentDirectoryPath(articlePath: string) {
+  const separatorIndex = articlePath.lastIndexOf('/')
+  return separatorIndex === -1 ? '' : articlePath.slice(0, separatorIndex)
+}
+
+function getArticleNameFromPath(articlePath: string) {
+  const fileName = articlePath.slice(articlePath.lastIndexOf('/') + 1)
+  return fileName.endsWith('.md') ? fileName.slice(0, -3) : fileName
 }
 
 function findArticle(
@@ -1939,6 +2176,28 @@ function findArticle(
       if (article) {
         return article
       }
+    }
+  }
+
+  return null
+}
+
+function findDirectory(
+  tree: ArticleTree | DirectoryNode,
+  directoryPath: string,
+): ArticleTree | DirectoryNode | null {
+  if (tree.path === directoryPath) {
+    return tree
+  }
+
+  for (const child of tree.children) {
+    if (child.type !== 'directory') {
+      continue
+    }
+
+    const directory = findDirectory(child, directoryPath)
+    if (directory) {
+      return directory
     }
   }
 

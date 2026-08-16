@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 import {
   IPC_CHANNELS,
+  type DesktopApiError,
   type DesktopResult,
   type Md2WechatDesktopApi,
 } from '../shared/types'
@@ -12,7 +13,10 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
     ...args,
   )) as DesktopResult<T>
   if (!result.ok) {
-    throw new Error(result.error.message)
+    throw {
+      name: 'DesktopApiError',
+      ...result.error,
+    } satisfies DesktopApiError
   }
   return result.value
 }
@@ -62,8 +66,14 @@ const desktopApi: Md2WechatDesktopApi = {
     read: (articlePath) => invoke(IPC_CHANNELS.articlesRead, articlePath),
     getStatus: (articlePath) =>
       invoke(IPC_CHANNELS.articlesGetStatus, articlePath),
-    save: (articlePath, content) =>
-      invoke(IPC_CHANNELS.articlesSave, articlePath, content),
+    save: (articlePath, content, expectedRevision, mode = 'normal') =>
+      invoke(
+        IPC_CHANNELS.articlesSave,
+        articlePath,
+        content,
+        expectedRevision,
+        mode,
+      ),
     rename: (articlePath, name) =>
       invoke(IPC_CHANNELS.articlesRename, articlePath, name),
     delete: (articlePath) =>

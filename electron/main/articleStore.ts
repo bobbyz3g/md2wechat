@@ -15,21 +15,18 @@ import type {
   ArticleContent,
   ArticleNode,
   ArticleRenameResult,
+  ArticleSaveMode,
   ArticleSaveResult,
   ArticleStatus,
   ArticleTree,
   DeleteResult,
   DirectoryNode,
   DirectoryRenameResult,
+  DesktopErrorCode,
   TreeNode,
 } from '../shared/types'
 
-export type AppErrorCode =
-  | 'INVALID_PATH'
-  | 'NOT_FOUND'
-  | 'CONFLICT'
-  | 'PERMISSION_DENIED'
-  | 'IO_ERROR'
+export type AppErrorCode = DesktopErrorCode
 
 export class AppError extends Error {
   readonly code: AppErrorCode
@@ -211,10 +208,17 @@ export class ArticleStore {
     const article = await this.resolvePath(articlePath, 'article')
 
     try {
-      return {
-        path: article.relativePath,
-        content: await readFile(article.absolutePath, 'utf8'),
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const beforeRead = await stat(article.absolutePath)
+        const content = await readFile(article.absolutePath, 'utf8')
+        const afterRead = await stat(article.absolutePath)
+
+        if (createArticleRevision(beforeRead) === createArticleRevision(afterRead)) {
+          return createArticleContent(article.relativePath, content, afterRead)
+        }
       }
+
+      throw new AppError('CONFLICT', '文章读取期间发生变化，请重试')
     } catch (error) {
       throw mapFileSystemError(error, { notFound: '文章不存在' })
     }
@@ -225,10 +229,7 @@ export class ArticleStore {
 
     try {
       const fileStat = await stat(article.absolutePath)
-      return {
-        path: article.relativePath,
-        updatedAt: fileStat.mtime.toISOString(),
-      }
+      return createArticleStatus(article.relativePath, fileStat)
     } catch (error) {
       throw mapFileSystemError(error, { notFound: '文章不存在' })
     }
@@ -237,22 +238,39 @@ export class ArticleStore {
   async saveArticle(
     articlePath: string,
     content: string,
+    expectedRevision: string,
+    mode: ArticleSaveMode,
   ): Promise<ArticleSaveResult> {
     if (typeof content !== 'string') {
       throw new AppError('INVALID_PATH', '文章内容必须是字符串')
     }
 
-    const article = await this.resolvePath(articlePath, 'article')
+    const article = await this.resolvePath(
+      articlePath,
+      'article',
+      mode === 'create',
+    )
 
     try {
-      await writeFile(article.absolutePath, content, 'utf8')
-      const fileStat = await stat(article.absolutePath)
-      return {
-        path: article.relativePath,
-        updatedAt: fileStat.mtime.toISOString(),
+      if (mode === 'normal') {
+        const currentStat = await stat(article.absolutePath)
+        if (createArticleRevision(currentStat) !== expectedRevision) {
+          throw new AppError('CONFLICT', '磁盘文件已变化')
+        }
       }
+
+      await writeFile(
+        article.absolutePath,
+        content,
+        mode === 'create' ? { encoding: 'utf8', flag: 'wx' } : 'utf8',
+      )
+      const fileStat = await stat(article.absolutePath)
+      return createArticleStatus(article.relativePath, fileStat)
     } catch (error) {
-      throw mapFileSystemError(error, { notFound: '文章不存在' })
+      throw mapFileSystemError(error, {
+        notFound: '文章不存在',
+        conflict: '磁盘文件已重新出现',
+      })
     }
   }
 
@@ -530,6 +548,32 @@ function compareTreeNodes(left: TreeNode, right: TreeNode) {
     return left.type === 'directory' ? -1 : 1
   }
   return left.name.localeCompare(right.name, 'zh-CN')
+}
+
+function createArticleContent(
+  articlePath: string,
+  content: string,
+  fileStat: { mtime: Date; mtimeMs: number; size: number },
+): ArticleContent {
+  return {
+    ...createArticleStatus(articlePath, fileStat),
+    content,
+  }
+}
+
+function createArticleStatus(
+  articlePath: string,
+  fileStat: { mtime: Date; mtimeMs: number; size: number },
+): ArticleStatus {
+  return {
+    path: articlePath,
+    updatedAt: fileStat.mtime.toISOString(),
+    revision: createArticleRevision(fileStat),
+  }
+}
+
+function createArticleRevision(fileStat: { mtimeMs: number; size: number }) {
+  return `${fileStat.mtimeMs}:${fileStat.size}`
 }
 
 async function assertPathAvailable(absolutePath: string, message: string) {

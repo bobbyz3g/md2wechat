@@ -22,9 +22,20 @@ export type ArticleTree = {
   children: TreeNode[]
 }
 
+export type DesktopErrorCode =
+  | 'INVALID_PATH'
+  | 'NOT_FOUND'
+  | 'CONFLICT'
+  | 'PERMISSION_DENIED'
+  | 'IO_ERROR'
+
 export type DesktopError = {
-  code: string
+  code: DesktopErrorCode
   message: string
+}
+
+export type DesktopApiError = DesktopError & {
+  name: 'DesktopApiError'
 }
 
 export type DesktopResult<T> =
@@ -49,14 +60,19 @@ export type CloseResolution = 'saved' | 'continue-editing' | 'discard'
 export type ArticleContent = {
   path: string
   content: string
+  updatedAt: string
+  revision: string
 }
 
 export type ArticleStatus = {
   path: string
   updatedAt: string
+  revision: string
 }
 
 export type ArticleSaveResult = ArticleStatus
+
+export type ArticleSaveMode = 'normal' | 'overwrite' | 'create'
 
 export type DirectoryRenameResult = {
   oldPath: string
@@ -118,7 +134,12 @@ export type Md2WechatDesktopApi = {
     ): Promise<ArticleNode>
     read(path: string): Promise<ArticleContent>
     getStatus(path: string): Promise<ArticleStatus>
-    save(path: string, content: string): Promise<ArticleSaveResult>
+    save(
+      path: string,
+      content: string,
+      expectedRevision: string,
+      mode?: ArticleSaveMode,
+    ): Promise<ArticleSaveResult>
     rename(path: string, name: string): Promise<ArticleRenameResult>
     delete(path: string): Promise<DeleteResult>
   }
