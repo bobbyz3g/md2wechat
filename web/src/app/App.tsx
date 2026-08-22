@@ -1751,16 +1751,16 @@ export function App() {
             type="button"
             onClick={() => toggleDirectory(node.path)}
           >
-            <span className="expand-indicator" aria-hidden="true">
-              {isExpanded ? '▾' : '▸'}
-            </span>
             <svg
-              className="directory-marker"
-              viewBox="0 0 16 16"
+              className={`directory-marker${isExpanded ? ' is-expanded' : ''}`}
+              viewBox="0 0 24 24"
               aria-hidden="true"
             >
-              <path d="M1.75 4.25h4l1.25 1.5h7.25v7.5H1.75z" />
-              <path d="M1.75 5.75v-3h4l1.25 1.5h6.25v1.5" />
+              {isExpanded ? (
+                <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6A2 2 0 0 1 18.45 20H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H19a2 2 0 0 1 2 2v2" />
+              ) : (
+                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+              )}
             </svg>
             <span className="tree-name">{node.name}</span>
           </button>
@@ -1968,7 +1968,19 @@ export function App() {
 
       <section className="app-main">
         <header className="topbar">
-          <div className="topbar-document" aria-live="polite">
+          <div
+            className="topbar-document"
+            aria-live="polite"
+            title={selectedPath ?? '从文章库选择或新建文章'}
+          >
+            <svg
+              className="document-tab-icon"
+              viewBox="0 0 20 20"
+              aria-hidden="true"
+            >
+              <path d="M4.5 3.5h6l4 4v9h-10z" />
+              <path d="M10.5 3.5v4h4" />
+            </svg>
             <span className="current-article-name">
               {currentArticle?.name ?? '开始一篇文章'}
             </span>
@@ -2118,6 +2130,7 @@ export function App() {
                       <path d="M8 21h8" />
                       <path d="M12 17v4" />
                     </svg>
+                    <span className="device-toggle-label">桌面</span>
                   </button>
                   <button
                     className={`device-toggle-button${
@@ -2139,6 +2152,7 @@ export function App() {
                       <rect x="7" y="2" width="10" height="20" rx="2" />
                       <path d="M11 18h2" />
                     </svg>
+                    <span className="device-toggle-label">手机</span>
                   </button>
                 </div>
               </div>
